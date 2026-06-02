@@ -1,11 +1,10 @@
 {
-  "name": "privguard-nexus",
-  "version": "2.0.0",
+  "name": "privguard-sentinel",
+  "version": "1.0.0",
   "private": true,
-  "workspaces": ["scanner", "dashboard"],
+  "workspaces": ["scanner"],
   "scripts": {
-    "scan": "npm run build --workspace=scanner && node scanner/dist/index.js",
-    "dev": "npm run dev --workspace=dashboard",
-    "dev:dashboard": "npm run dev --workspace=dashboard"
+    "build": "npm run build --workspace=scanner",
+    "scan": "npm run build --workspace=scanner && node scanner/dist/index.js"
   }
 }

@@ -45,13 +45,14 @@ export async function analyzeWithLLM(
 
   try {
     const body = isOllama
-      ? JSON.stringify({ model, prompt, system: SYSTEM_PROMPT, stream: false })
+      ? JSON.stringify({ model, prompt, system: SYSTEM_PROMPT, stream: false, format: "json" })
       : JSON.stringify({
           model,
           messages: [
             { role: "system", content: SYSTEM_PROMPT },
             { role: "user", content: prompt },
           ],
+          response_format: { type: "json_object" }
         });
 
     const res = await fetch(endpoint, { method: "POST", headers, body });

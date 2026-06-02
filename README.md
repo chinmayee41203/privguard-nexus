@@ -1,80 +1,81 @@
-# PrivGuard Nexus
+# PrivGuard Sentinel
 
-> **PrivGuard Nexus is a unified AI code review agent that checks every PR for code quality, security, privacy, compliance, prompt injection, and hidden backdoors before unsafe code reaches production.**
+> **PrivGuard Sentinel is an intelligent, portable GitHub Action that checks every Pull Request for code quality, security, privacy, compliance, prompt injection, and hidden backdoors. It posts inline feedback and a Unified Risk Intelligence Panel directly on your PR.**
 
-PrivGuard Nexus acts as an intelligent PR review system. Instead of using separate tools for separate checks, developers get one unified view of the PR risk. It brings together the strengths of traditional static analysis and modern agentic reasoning (powered by Llama 8B).
+PrivGuard Sentinel bridges the gap between static analysis and agentic reasoning. Instead of logging into external dashboards, developers get inline code review comments on the exact lines that introduce risk, powered by a rule-based engine and an LLM.
 
 ---
 
-## 🚀 Core Risk Intelligence Layers
+## 🚀 Features
 
-1. **Privacy Compliance Layer**: Detects PII collection, sensitive logging, and third-party data leaks. It also tracks the **Privacy Impact Diff Timeline**, showing exactly how a PR changes the product's privacy behavior.
-2. **Backdoor & Insider Threat Detection**: Scans for hidden admin access, authentication bypasses, hardcoded privileged users, and silent data exfiltration.
-3. **Prompt Injection Defense**: Protects against adversarial inputs like "ignore previous instructions" or "approve this PR" embedded in code comments, PR descriptions, or prompt templates.
-4. **Security Risk Detection**: Detects insecure HTTP, hardcoded secrets, token exposure, and weak authentication.
-5. **Code Quality Review**: Flags bad coding practices, duplicate code, and suspicious complexity.
-
-## 🧠 Llama 8B Reasoning Agent
-
-PrivGuard Nexus uses rule-based scanners to find suspicious snippets efficiently, then sends only those snippets to a local or remote **Llama 8B** model for deeper reasoning. 
-
-The LLM determines:
-- Why the code is risky.
-- Whether the intent seems *accidental*, *negligent*, *suspicious*, or *malicious*.
-- What specific privacy/security rule is violated.
-- **Agentic Fix Recommendations**: The exact diff needed to patch the risk.
-
-## 📊 Unified Risk Intelligence Panel
-
-All review outputs are aggregated into a single, beautiful glassmorphism dashboard. 
-The dashboard provides a **Merge Recommendation** (Safe to Merge, Needs Review, Do Not Merge) based on five critical scores:
-- Overall Risk Score
-- Privacy Score
-- Security Score
-- AI Safety Score
-- Backdoor Risk Score
+- **Privacy Compliance**: Detects PII logging, data leaks, and GDPR/CCPA violations.
+- **Security Risk Detection**: Flags insecure HTTP, hardcoded secrets, and weak authentication.
+- **Insider Threat Detection**: Scans for obfuscated payloads, reverse shells, and backdoor logic.
+- **Prompt Injection Defense**: Defends against adversarial prompts in code logic.
+- **Strict Mode Enforcement**: Optionally fail the GitHub PR check if a CRITICAL risk is introduced.
+- **Unified Risk Panel**: A beautiful Markdown-based summary table posted as a PR comment and Action Job Summary.
 
 ---
 
 ## 🛠 Getting Started
 
-### 1. Start the Dashboard UI
-To view the Unified Risk Intelligence Panel (from the repository root):
-```bash
-npm run dev
+PrivGuard Sentinel is a standalone GitHub Action. You can drop it into any repository to instantly get AI-powered security reviews on every Pull Request.
+
+### Prerequisites
+
+Create a repository secret containing your LLM API Key (e.g., OpenAI API Key).
+- **Settings -> Secrets and variables -> Actions -> New repository secret**
+- Name it `LLM_API_KEY`
+
+### Usage
+
+Create a new file in your repository: `.github/workflows/privguard.yml` and paste the following:
+
+```yaml
+name: PrivGuard Sentinel Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  sentinel:
+    name: AI Security Review
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write # Required for inline comments
+      contents: read       # Required to checkout the code
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Run PrivGuard Sentinel
+        uses: varadrane7/privguard-sentinel@v1.0.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          llm-api-url: 'https://api.openai.com'
+          llm-api-key: ${{ secrets.LLM_API_KEY }}
+          llm-model: 'gpt-4o-mini'
+          strict-mode: 'true'
 ```
-Open `http://localhost:3000`. You will see the glassmorphism UI with demo buttons to test various risk scenarios.
 
-### 2. Run a Real Code Scan
-To scan a target project (e.g., our sample app) and feed the report into the dashboard:
-```bash
-# Generate the report
-node scanner/dist/index.js test-projects/sample-app/src -o privguard-report.json
+### Inputs
 
-# Post the report to the dashboard
-curl -X POST http://localhost:3000/api/reports -H "Content-Type: application/json" -d @privguard-report.json
-```
-Refresh the dashboard to see the real scan results.
-
-### 3. Test LLM Reasoning (Local Llama)
-If you want to run the real LLM reasoning locally, ensure you have [Ollama](https://ollama.com/) running.
-```bash
-# Pull the model (one-time)
-ollama pull llama3:8b
-
-# Run the scanner with the LLM enabled
-node scanner/dist/index.js test-projects/sample-app/src --llm --llm-model llama3:8b
-```
-Each finding will be intelligently classified by the LLM and presented with deep reasoning and fix recommendations.
-
-### 4. GitHub Actions Integration
-PrivGuard Nexus runs automatically on PRs and pushes to `main`. The workflow is located at `.github/workflows/safecommit.yml`. 
-To enable the LLM in your CI pipeline, add `LLM_API_URL` and `LLM_API_KEY` as repository secrets.
+| Input | Required | Default | Description |
+|---|---|---|---|
+| `github-token` | Yes | N/A | The GitHub token (use `${{ secrets.GITHUB_TOKEN }}`) |
+| `llm-api-url` | No | `''` | Base URL of an OpenAI-compatible LLM API |
+| `llm-api-key` | No | `''` | The API Key for the LLM Provider |
+| `llm-model` | No | `'llama3:8b'` | Model name to use for reasoning |
+| `strict-mode` | No | `'false'` | If `'true'`, fails the PR check when risks are detected |
 
 ---
 
-## 🗂 Project Structure
-* `dashboard/` - Next.js UI for the Unified Risk Intelligence Panel.
-* `scanner/` - Node.js scanner incorporating AST/Regex rule checks and the Llama 8B integration.
-* `test-projects/` - Isolated test repositories (like `sample-app`) to test scanning capabilities without dirtying the core monorepo.
-* `docs/` - System architecture, testing guides, and feature documentation.
+## 🗂 Architecture
+
+PrivGuard Sentinel acts strictly on **Pull Request Diffs**.
+1. **Diff Parsing**: Uses the Octokit API to fetch the `.patch` of files changed in a PR.
+2. **Hybrid Scanning**: Runs rapid rule-based checks locally within the action runner. If issues are found, the offending snippets are sent to the LLM for deep reasoning.
+3. **Structured Outputs**: The LLM responds natively with strict JSON structure enforcing correct formatting.
+4. **Feedback loop**: The action translates the JSON into GitHub PR Review Inline Comments positioned exactly at the modified lines.

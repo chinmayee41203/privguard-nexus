@@ -1,77 +1,35 @@
-name: PrivGuard Nexus — AI Code Review
+name: PrivGuard Sentinel — AI PR Review
 
 on:
-  push:
-    branches: [main, master, develop]
   pull_request:
-    branches: [main, master]
+    branches: [main, master, develop]
 
 jobs:
-  privguard-scan:
-    name: PrivGuard Nexus — Privacy, Security & Backdoor Analysis
+  privguard-sentinel:
+    name: PrivGuard Sentinel
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write   # required to post inline review comments
+      contents: read
 
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+
+
+      - name: Run PrivGuard Sentinel
+        id: sentinel
+        uses: ./
         with:
-          node-version: "20"
-          cache: "npm"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          llm-api-url:  ${{ secrets.LLM_API_URL }}
+          llm-api-key:  ${{ secrets.LLM_API_KEY }}
+          llm-model:    ${{ vars.LLM_MODEL || 'llama3:8b' }}
+          strict-mode:  'true'
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build scanner
-        run: npm run build --workspace=scanner
-
-      - name: Run PrivGuard scan
-        id: scan
-        env:
-          LLM_API_URL: ${{ secrets.LLM_API_URL || 'http://localhost:11434' }}
-          LLM_API_KEY: ${{ secrets.LLM_API_KEY || '' }}
-        run: |
-          node scanner/dist/index.js . \
-            --output privguard-report.json \
-            --fail-on-block
-        continue-on-error: true
-
-      - name: Upload scan report
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: privguard-report
-          path: privguard-report.json
-          retention-days: 30
-
-      - name: Post scan summary
+      - name: Echo decision
         if: always()
         run: |
-          if [ -f privguard-report.json ]; then
-            DECISION=$(python3 -c "import sys,json; d=json.load(open('privguard-report.json')); print(d['overallDecision'])")
-            OVERALL=$(python3 -c "import sys,json; d=json.load(open('privguard-report.json')); print(d['scores']['overall'])")
-            PRIVACY=$(python3 -c "import sys,json; d=json.load(open('privguard-report.json')); print(d['scores']['privacy'])")
-            SECURITY=$(python3 -c "import sys,json; d=json.load(open('privguard-report.json')); print(d['scores']['security'])")
-            AI_SAFETY=$(python3 -c "import sys,json; d=json.load(open('privguard-report.json')); print(d['scores']['aiSafety'])")
-            BACKDOOR=$(python3 -c "import sys,json; d=json.load(open('privguard-report.json')); print(d['scores']['backdoorRisk'])")
-            FINDINGS=$(python3 -c "import sys,json; d=json.load(open('privguard-report.json')); print(d['summary']['totalFindings'])")
-            echo "## PrivGuard Nexus Scan Results" >> $GITHUB_STEP_SUMMARY
-            echo "| Metric | Score |" >> $GITHUB_STEP_SUMMARY
-            echo "| --- | --- |" >> $GITHUB_STEP_SUMMARY
-            echo "| **Decision** | **${DECISION}** |" >> $GITHUB_STEP_SUMMARY
-            echo "| Overall Risk | ${OVERALL}/100 |" >> $GITHUB_STEP_SUMMARY
-            echo "| Privacy | ${PRIVACY}/100 |" >> $GITHUB_STEP_SUMMARY
-            echo "| Security | ${SECURITY}/100 |" >> $GITHUB_STEP_SUMMARY
-            echo "| AI Safety | ${AI_SAFETY}/100 |" >> $GITHUB_STEP_SUMMARY
-            echo "| Backdoor Risk | ${BACKDOOR}/100 |" >> $GITHUB_STEP_SUMMARY
-            echo "| Total Findings | ${FINDINGS} |" >> $GITHUB_STEP_SUMMARY
-          fi
-
-      - name: Block on Do Not Merge decision
-        if: steps.scan.outcome == 'failure'
-        run: |
-          echo "PrivGuard Nexus blocked this deployment: Do Not Merge."
-          echo "Review privguard-report.json for details and fix all critical findings."
-          exit 1
+          echo "Decision: ${{ steps.sentinel.outputs.decision }}"
+          echo "Overall score: ${{ steps.sentinel.outputs.overall-score }}"

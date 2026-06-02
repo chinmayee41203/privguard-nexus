@@ -4,10 +4,8 @@ node_modules
 .env
 .env.local
 .next/
-dist/
 build/
 privguard-report.json
 safecommit-report.json
 *.log
 .DS_Store
-docs/

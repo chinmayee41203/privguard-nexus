@@ -1,0 +1,38 @@
+name: 'PrivGuard Sentinel'
+description: 'Unified AI code review for privacy, security, backdoors, and prompt injection on every PR'
+author: 'PrivGuard'
+
+inputs:
+  github-token:
+    description: 'GitHub token for API access (use secrets.GITHUB_TOKEN)'
+    required: true
+  llm-api-url:
+    description: 'Base URL of an OpenAI-compatible LLM API (e.g. https://api.openai.com). Leave blank to skip LLM reasoning.'
+    required: false
+    default: ''
+  llm-api-key:
+    description: 'API key for the LLM provider'
+    required: false
+    default: ''
+  llm-model:
+    description: 'Model name to use for LLM reasoning'
+    required: false
+    default: 'llama3:8b'
+  strict-mode:
+    description: 'Fail the action when decision is "Do Not Merge"'
+    required: false
+    default: 'false'
+
+outputs:
+  decision:
+    description: 'Merge decision: Safe to Merge | Needs Review | Do Not Merge'
+  overall-score:
+    description: 'Overall risk score 0–100'
+
+runs:
+  using: 'node24'
+  main: 'scanner/dist/index.js'
+
+branding:
+  icon: 'shield'
+  color: 'red'

@@ -326,6 +326,38 @@ function extractSnippet(lines: string[], lineIndex: number): string {
   return lines.slice(start, end + 1).join("\n").trim().slice(0, 1500);
 }
 
+/**
+ * Scans a single line of content (from a diff's added lines) against all rules.
+ * snippet should be the pre-built hunk context around this line.
+ */
+export function scanLineContent(
+  filePath: string,
+  lineNo: number,
+  lineContent: string,
+  snippet: string
+): Finding[] {
+  const findings: Finding[] = [];
+  for (const rule of RULES) {
+    rule.pattern.lastIndex = 0;
+    if (rule.pattern.test(lineContent)) {
+      rule.pattern.lastIndex = 0;
+      findings.push({
+        id: crypto.randomUUID(),
+        type: rule.type,
+        severity: rule.severity,
+        file: filePath,
+        line: lineNo,
+        snippet,
+        ruleId: rule.id,
+        ruleTriggered: rule.name,
+        recommendation: rule.recommendation,
+        whyItMatters: rule.whyItMatters,
+      });
+    }
+  }
+  return findings;
+}
+
 export function scanFileContent(filePath: string, content: string): Finding[] {
   const findings: Finding[] = [];
   const lines = content.split("\n");

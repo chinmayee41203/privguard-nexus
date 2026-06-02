@@ -51,7 +51,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Run PrivGuard Sentinel
-        uses: varadrane7/privguard-sentinel@v1.0.0
+        uses: varadrane7/privguard-sentinel@v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           llm-api-url: 'https://api.openai.com'

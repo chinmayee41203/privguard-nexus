@@ -1,8 +1,8 @@
-# PrivGuard Sentinel
+# PrivGuard Nexus
 
-> **PrivGuard Sentinel is an intelligent, portable GitHub Action that checks every Pull Request for code quality, security, privacy, compliance, prompt injection, and hidden backdoors. It posts inline feedback and a Unified Risk Intelligence Panel directly on your PR.**
+> **PrivGuard Nexus is an intelligent, portable GitHub Action that checks every Pull Request for code quality, security, privacy, compliance, prompt injection, and hidden backdoors. It posts inline feedback and a Unified Risk Intelligence Panel directly on your PR.**
 
-PrivGuard Sentinel bridges the gap between static analysis and agentic reasoning. Instead of logging into external dashboards, developers get inline code review comments on the exact lines that introduce risk, powered by a rule-based engine and an LLM.
+PrivGuard Nexus bridges the gap between static analysis and agentic reasoning. Instead of logging into external dashboards, developers get inline code review comments on the exact lines that introduce risk, powered by a rule-based engine and an LLM.
 
 ---
 
@@ -19,7 +19,7 @@ PrivGuard Sentinel bridges the gap between static analysis and agentic reasoning
 
 ## 🛠 Getting Started
 
-PrivGuard Sentinel is a standalone GitHub Action. You can drop it into any repository to instantly get AI-powered security reviews on every Pull Request.
+PrivGuard Nexus is a standalone GitHub Action. You can drop it into any repository to instantly get AI-powered security reviews on every Pull Request.
 
 ### Prerequisites
 
@@ -32,14 +32,14 @@ Create a repository secret containing your LLM API Key (e.g., OpenAI API Key).
 Create a new file in your repository: `.github/workflows/privguard.yml` and paste the following:
 
 ```yaml
-name: PrivGuard Sentinel Review
+name: PrivGuard Nexus Review
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
 
 jobs:
-  sentinel:
+  Nexus:
     name: AI Security Review
     runs-on: ubuntu-latest
     permissions:
@@ -50,7 +50,7 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Run PrivGuard Sentinel
+      - name: Run PrivGuard Nexus
         uses: varadrane7/privguard-sentinel@v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -74,7 +74,7 @@ jobs:
 
 ## 🗂 Architecture
 
-PrivGuard Sentinel acts strictly on **Pull Request Diffs**.
+PrivGuard Nexus acts strictly on **Pull Request Diffs**.
 1. **Diff Parsing**: Uses the Octokit API to fetch the `.patch` of files changed in a PR.
 2. **Hybrid Scanning**: Runs rapid rule-based checks locally within the action runner. If issues are found, the offending snippets are sent to the LLM for deep reasoning.
 3. **Structured Outputs**: The LLM responds natively with strict JSON structure enforcing correct formatting.

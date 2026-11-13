@@ -1,0 +1,6 @@
+# Use LF line endings everywhere (also on Windows) so the action bundle built
+# locally is byte-identical to the one GitHub builds on Linux.
+* text=auto eol=lf
+*.ico binary
+*.png binary
+*.db binary

@@ -45,6 +45,16 @@ export interface PullRequestInfo {
   author: string;
 }
 
+export interface PushInfo {
+  repo: string;
+  branch: string;
+  commitSha: string;
+  url: string;
+  message: string;
+  author: string;
+  commitCount?: number;
+}
+
 export interface PipelineStats {
   ruleFlags: number;
   aiDismissed: number;
@@ -71,6 +81,8 @@ export interface PrivGuardReport {
     byCategory: Record<FindingType, number>;
   };
   source?: "action" | "cli";
+  trigger?: "pull_request" | "push";
   pr?: PullRequestInfo;
+  push?: PushInfo;
   pipeline?: PipelineStats;
 }

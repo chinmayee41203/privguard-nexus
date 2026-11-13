@@ -1,16 +1,20 @@
-name: PrivGuard Nexus — AI PR Review
+name: PrivGuard Nexus — AI Code Review
 
 on:
+  # Review pull requests before they're merged…
   pull_request:
     branches: [main, master, develop]
+  # …and direct pushes to main after they land (merged PRs are skipped).
+  push:
+    branches: [main]
 
 jobs:
   privguard-nexus:
     name: PrivGuard Nexus
     runs-on: ubuntu-latest
     permissions:
-      pull-requests: write   # required to post inline review comments
-      contents: read
+      pull-requests: write   # post review comments on pull requests
+      contents: write        # post comments on pushed commits (push mode)
 
     steps:
       - name: Checkout repository

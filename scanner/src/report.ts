@@ -37,7 +37,7 @@ export function buildReport(args: {
   findings: Finding[];
   scores: Scores;
   decision: DecisionType;
-  extra?: Pick<PrivGuardReport, "source" | "pr" | "pipeline">;
+  extra?: Pick<PrivGuardReport, "source" | "trigger" | "pr" | "push" | "pipeline">;
 }): PrivGuardReport {
   const { findings } = args;
   const count = (sev: Finding["severity"]) => findings.filter((f) => f.severity === sev).length;

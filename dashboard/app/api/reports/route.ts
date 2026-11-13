@@ -19,6 +19,37 @@ function authorized(req: NextRequest): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+const githubUrl = (v: unknown) => (/^https:\/\/github\.com\//.test(String(v)) ? str(v, 300) : null);
+
+/** Pull-request or push details, stored in the shared repo/title/url/commit columns. */
+function context(body: Partial<PrivGuardReport>) {
+  if (body.pr) {
+    return {
+      trigger: "pull_request",
+      repo: str(body.pr.repo, 200),
+      prNumber: int(body.pr.number),
+      prTitle: str(body.pr.title, 300),
+      prUrl: githubUrl(body.pr.url),
+      commitSha: str(body.pr.commitSha, 40),
+      prAuthor: str(body.pr.author, 100),
+      branch: null,
+    };
+  }
+  if (body.push) {
+    return {
+      trigger: "push",
+      repo: str(body.push.repo, 200),
+      prNumber: null,
+      prTitle: str(body.push.message, 300),
+      prUrl: githubUrl(body.push.url),
+      commitSha: str(body.push.commitSha, 40),
+      prAuthor: str(body.push.author, 100),
+      branch: str(body.push.branch, 200),
+    };
+  }
+  return { trigger: null, repo: null, prNumber: null, prTitle: null, prUrl: null, commitSha: null, prAuthor: null, branch: null };
+}
+
 export async function POST(req: NextRequest) {
   if (!authorized(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -56,12 +87,7 @@ export async function POST(req: NextRequest) {
         backdoorCount: int(summary.byCategory?.backdoor),
         privacyDiffJson: body.privacyDiff ? JSON.stringify(body.privacyDiff).slice(0, 5000) : null,
         source: body.source === "action" ? "action" : "cli",
-        repo: body.pr ? str(body.pr.repo, 200) : null,
-        prNumber: body.pr ? int(body.pr.number) : null,
-        prTitle: body.pr ? str(body.pr.title, 300) : null,
-        prUrl: body.pr && /^https:\/\/github\.com\//.test(String(body.pr.url)) ? str(body.pr.url, 300) : null,
-        commitSha: body.pr ? str(body.pr.commitSha, 40) : null,
-        prAuthor: body.pr ? str(body.pr.author, 100) : null,
+        ...context(body),
         ruleFlags: body.pipeline ? int(body.pipeline.ruleFlags) : null,
         aiDismissed: body.pipeline ? int(body.pipeline.aiDismissed) : null,
         aiFound: body.pipeline ? int(body.pipeline.aiFound) : null,
@@ -157,6 +183,18 @@ export async function GET() {
         },
       },
       source: r.source === "action" ? "action" : "cli",
+      trigger: r.trigger === "push" ? "push" : r.prNumber != null ? "pull_request" : undefined,
+      push:
+        r.trigger === "push" && r.repo
+          ? {
+              repo: r.repo,
+              branch: r.branch ?? "",
+              commitSha: r.commitSha ?? "",
+              url: r.prUrl ?? "",
+              message: r.prTitle ?? "",
+              author: r.prAuthor ?? "",
+            }
+          : undefined,
       pr:
         r.repo && r.prNumber != null
           ? {

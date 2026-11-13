@@ -33,8 +33,11 @@ model Report {
   backdoorCount     Int       @default(0)
   privacyDiffJson   String?
 
-  // Where the report came from: "action" (pull-request review) or "cli" (local scan)
+  // Where the report came from: "action" (GitHub Action) or "cli" (local scan)
   source            String    @default("cli")
+  // What the Action reviewed: "pull_request" or "push"
+  trigger           String?
+  branch            String?
   repo              String?
   prNumber          Int?
   prTitle           String?

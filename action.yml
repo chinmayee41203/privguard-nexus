@@ -1,5 +1,5 @@
 name: 'PrivGuard Nexus'
-description: 'Unified AI code review for privacy, security, backdoors, and prompt injection on every PR'
+description: 'AI code review for privacy, security, backdoors and prompt injection on every pull request and push'
 author: 'PrivGuard'
 
 inputs:
@@ -30,6 +30,10 @@ inputs:
     description: 'Maximum size of each diff chunk sent to the LLM, so large PRs fit within context limits'
     required: false
     default: '12000'
+  ignore-paths:
+    description: 'Extra paths to skip, comma or newline separated globs (e.g. "docs/**, *.md"). Generated files like dist/, lockfiles and images are always skipped.'
+    required: false
+    default: ''
   dashboard-url:
     description: 'Base URL of a PrivGuard Nexus dashboard to send each review to (optional)'
     required: false

@@ -28,6 +28,63 @@ export async function fetchPRFiles(
   }));
 }
 
+/**
+ * Files changed by a push. Compares the previous tip with the new one; for a
+ * brand-new branch (no previous tip) it uses the pushed commit's own changes.
+ */
+export async function fetchPushFiles(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  before: string,
+  after: string
+): Promise<PRFile[]> {
+  const isNewBranch = !before || /^0+$/.test(before);
+  const files = isNewBranch
+    ? (await octokit.rest.repos.getCommit({ owner, repo, ref: after })).data.files ?? []
+    : (await octokit.rest.repos.compareCommitsWithBasehead({ owner, repo, basehead: `${before}...${after}` })).data.files ?? [];
+  return files.map(f => ({ filename: f.filename, patch: f.patch, status: f.status }));
+}
+
+/** If this commit is the result of merging a pull request, returns that PR's number. */
+export async function findMergedPullRequest(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  sha: string
+): Promise<number | null> {
+  try {
+    const { data } = await octokit.rest.repos.listPullRequestsAssociatedWithCommit({ owner, repo, commit_sha: sha });
+    const merged = data.find(pr => pr.merged_at && pr.merge_commit_sha === sha);
+    return merged ? merged.number : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function postCommitComment(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  sha: string,
+  body: string
+): Promise<void> {
+  await octokit.rest.repos.createCommitComment({ owner, repo, commit_sha: sha, body });
+}
+
+/** Markdown table of findings for a push, each linked to its line at that commit. */
+export function buildFindingsTable(findings: Finding[], owner: string, repo: string, sha: string): string {
+  const sevEmoji: Record<string, string> = { CRITICAL: '🔴', HIGH: '🟠', MEDIUM: '🟡', LOW: '🟢' };
+  const esc = (s: string) => s.replace(/\|/g, '\\|').replace(/\n/g, ' ');
+  const rows = findings.map(f => {
+    const link = `https://github.com/${owner}/${repo}/blob/${sha}/${f.file}#L${f.line}`;
+    const what = f.source === 'ai' ? `🤖 ${esc(f.ruleTriggered)}` : `\`${f.ruleId}\` ${esc(f.ruleTriggered)}`;
+    const fix = esc(f.llmFix || f.recommendation);
+    return `| ${sevEmoji[f.severity] ?? '⚠️'} ${f.severity} | [${esc(f.file)}:${f.line}](${link}) | ${what} | ${fix} |`;
+  });
+  return ['| Severity | Where | Finding | Suggested fix |', '|---|---|---|---|', ...rows].join('\n');
+}
+
 interface ReviewComment {
   path: string;
   line: number;

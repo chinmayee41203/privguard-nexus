@@ -40,13 +40,50 @@ const REPO_URL = "https://github.com/chinmayee41203/privguard-nexus";
 const DEMO_PR_URL = `${REPO_URL}/pull/2`;
 
 function reviewLabel(r: PrivGuardReport): string {
-  return r.pr ? `${r.pr.repo} #${r.pr.number}` : r.scannedDirectory;
+  if (r.pr) return `${r.pr.repo} #${r.pr.number}`;
+  if (r.push) return `${r.push.repo} · push to ${r.push.branch} @ ${r.push.commitSha.slice(0, 7)}`;
+  return r.scannedDirectory;
 }
 
-// ── PullRequestCard ───────────────────────────────────────────────────────────
+function reviewTitle(r: PrivGuardReport): string | undefined {
+  return r.pr?.title || r.push?.message || undefined;
+}
+
+// ── Review context: the pull request or push that was reviewed ───────────────
+
+function PushCard({ r }: { r: PrivGuardReport }) {
+  if (!r.push) return null;
+  const { push } = r;
+  return (
+    <div className="glass p-4 flex items-center justify-between flex-wrap gap-3">
+      <div className="min-w-0">
+        <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-1">
+          Push to <span className="font-mono normal-case tracking-normal text-gray-300">{push.branch}</span> reviewed
+        </p>
+        <p className="text-sm font-semibold text-gray-100 truncate">{push.message || "(no commit message)"}</p>
+        <p className="text-xs text-gray-500 font-mono mt-0.5">
+          {push.repo} · {push.commitSha.slice(0, 7)}
+          {push.author && <> · by {push.author}</>}
+          {" · "}{new Date(r.timestamp).toLocaleString()}
+        </p>
+        <p className="text-xs text-amber-300/70 mt-1">Already on {push.branch}: findings are fixed in a follow-up commit.</p>
+      </div>
+      {push.url && (
+        <a
+          href={push.url}
+          target="_blank"
+          rel="noreferrer"
+          className="text-xs px-3 py-1.5 rounded-lg border border-indigo-500/40 text-indigo-300 hover:bg-indigo-500/10 transition-colors shrink-0"
+        >
+          View commit ↗
+        </a>
+      )}
+    </div>
+  );
+}
 
 function PullRequestCard({ r }: { r: PrivGuardReport }) {
-  if (!r.pr) return null;
+  if (!r.pr) return <PushCard r={r} />;
   const { pr } = r;
   return (
     <div className="glass p-4 flex items-center justify-between flex-wrap gap-3">
@@ -352,7 +389,7 @@ export default function Dashboard() {
               PrivGuard Nexus
             </h1>
             <p className="text-xs text-gray-500 mt-0.5">
-              AI code review for pull requests · every review from the GitHub Action lands here
+              AI code review for pull requests and pushes · every review from the GitHub Action lands here
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap justify-end">
@@ -402,7 +439,7 @@ export default function Dashboard() {
             <div className="text-5xl">🔍</div>
             <h2 className="text-xl font-bold text-gray-200">No reviews yet</h2>
             <p className="text-gray-400 text-sm max-w-lg mx-auto">
-              Reviews appear here automatically when the PrivGuard Nexus GitHub Action checks a pull request
+              Reviews appear here automatically when the PrivGuard Nexus GitHub Action checks a pull request or a push
               (with <code className="text-indigo-300">dashboard-url</code> and <code className="text-indigo-300">dashboard-token</code> set).
               Meanwhile, pick a demo scenario above.
             </p>
@@ -537,8 +574,8 @@ export default function Dashboard() {
                           {r.overallDecision}
                         </p>
                         <p className="text-xs text-gray-500">
-                          {reviewLabel(r)}
-                          {r.pr?.title && <span className="text-gray-600"> · {r.pr.title}</span>}
+                          {r.push ? "⤴ " : r.pr ? "⇄ " : ""}{reviewLabel(r)}
+                          {reviewTitle(r) && <span className="text-gray-600"> · {reviewTitle(r)}</span>}
                         </p>
                       </div>
                     </div>

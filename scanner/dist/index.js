@@ -29969,173 +29969,264 @@ const rules_1 = __nccwpck_require__(3558);
 const review_1 = __nccwpck_require__(6701);
 const scorer_1 = __nccwpck_require__(3065);
 const github_1 = __nccwpck_require__(1454);
+const ignore_1 = __nccwpck_require__(5667);
 const report_1 = __nccwpck_require__(9291);
 const SEVERITY_ORDER = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
-async function run() {
-    try {
-        const githubToken = core.getInput('github-token', { required: true });
-        const llmApiUrl = core.getInput('llm-api-url');
-        const llmApiKey = core.getInput('llm-api-key');
-        const llmModel = core.getInput('llm-model') || 'llama3:8b';
-        const strictMode = core.getInput('strict-mode') === 'true';
-        const minSeverityInput = (core.getInput('min-severity') || 'LOW').toUpperCase();
-        const minSeverity = (minSeverityInput in SEVERITY_ORDER ? minSeverityInput : 'LOW');
-        const maxChunkChars = Math.max(2000, parseInt(core.getInput('max-chunk-chars') || '12000', 10) || 12000);
-        const dashboardUrl = core.getInput('dashboard-url');
-        const dashboardToken = core.getInput('dashboard-token');
-        const { payload, repo } = github.context;
-        const pullRequest = payload.pull_request;
-        if (!pullRequest) {
-            core.info('PrivGuard Nexus: no pull_request in event payload — skipping.');
-            return;
+function readSettings() {
+    const minSeverityInput = (core.getInput('min-severity') || 'LOW').toUpperCase();
+    return {
+        llmApiUrl: core.getInput('llm-api-url'),
+        llmApiKey: core.getInput('llm-api-key'),
+        llmModel: core.getInput('llm-model') || 'llama3:8b',
+        strictMode: core.getInput('strict-mode') === 'true',
+        minSeverity: (minSeverityInput in SEVERITY_ORDER ? minSeverityInput : 'LOW'),
+        maxChunkChars: Math.max(2000, parseInt(core.getInput('max-chunk-chars') || '12000', 10) || 12000),
+        dashboardUrl: core.getInput('dashboard-url'),
+        dashboardToken: core.getInput('dashboard-token'),
+        isIgnored: (0, ignore_1.makeIgnoreMatcher)(core.getInput('ignore-paths')),
+    };
+}
+/** The shared pipeline: rule engine → AI review pass → scoring. Used for PRs and pushes. */
+async function reviewFiles(files, s) {
+    // ── Stage 2: rule-based scan over added lines ──────────────────────────
+    const allFindings = [];
+    const parsedFiles = [];
+    let skipped = 0;
+    for (const file of files) {
+        if (file.status === 'removed' || !file.patch)
+            continue;
+        if (s.isIgnored(file.filename)) {
+            skipped++;
+            continue;
         }
-        const pullNumber = pullRequest.number;
-        const commitSha = pullRequest.head.sha;
-        const { owner, repo: repoName } = repo;
-        core.info(`[PrivGuard Nexus] PR #${pullNumber} — ${owner}/${repoName} @ ${commitSha.slice(0, 7)}`);
-        const octokit = github.getOctokit(githubToken);
-        // ── Stage 1: fetch diff ────────────────────────────────────────────────
-        const prFiles = await (0, github_1.fetchPRFiles)(octokit, owner, repoName, pullNumber);
-        core.info(`  ${prFiles.length} file(s) in diff`);
-        // ── Stage 2: rule-based scan over added lines ──────────────────────────
-        const allFindings = [];
-        const parsedFiles = [];
-        for (const prFile of prFiles) {
-            if (prFile.status === 'removed' || !prFile.patch)
+        const parsed = (0, diff_1.parsePatch)(file.filename, file.patch);
+        const addedLines = parsed.hunkLines.filter(l => l.type === 'add');
+        if (addedLines.length === 0)
+            continue;
+        parsedFiles.push(parsed);
+        core.info(`  Scanning: ${file.filename} (${addedLines.length} added line(s))`);
+        for (const line of addedLines) {
+            const snippet = (0, diff_1.buildSnippet)(parsed.hunkLines, line.newLineNo);
+            const lineFindings = (0, rules_1.scanLineContent)(file.filename, line.newLineNo, line.content, snippet);
+            if (lineFindings.length > 0)
+                core.info(`    [!] ${lineFindings.length} finding(s) at line ${line.newLineNo}`);
+            allFindings.push(...lineFindings);
+        }
+    }
+    if (skipped)
+        core.info(`  Skipped ${skipped} generated/ignored file(s)`);
+    core.info(`  Rule scan complete: ${allFindings.length} finding(s)`);
+    // ── Stage 3: AI review pass (one LLM call per diff chunk) ─────────────
+    // Gives a verdict on each rule flag AND reports issues the rules missed.
+    // If the LLM is down or out of quota, that chunk keeps its rule results.
+    const ruleCount = allFindings.length;
+    let llmDismissed = 0;
+    let chunksReviewed = 0;
+    let chunksFailed = 0;
+    const aiFindings = [];
+    if (s.llmApiUrl) {
+        const cfg = { model: s.llmModel, url: s.llmApiUrl, key: s.llmApiKey };
+        const chunks = parsedFiles.flatMap(p => (0, review_1.buildChunks)(p, s.maxChunkChars));
+        core.info(`  AI review (model: ${s.llmModel}): ${chunks.length} chunk(s) of up to ${s.maxChunkChars} chars`);
+        for (const chunk of chunks) {
+            const flags = allFindings.filter(f => f.file === chunk.file && chunk.addedLines.has(f.line));
+            const result = await (0, review_1.reviewChunk)(chunk, flags, cfg);
+            if (!result) {
+                chunksFailed++;
+                core.warning(`AI review unavailable for ${chunk.file}:${chunk.firstLine}-${chunk.lastLine}; using rule results only.`);
                 continue;
-            const parsed = (0, diff_1.parsePatch)(prFile.filename, prFile.patch);
-            const addedLines = parsed.hunkLines.filter(l => l.type === 'add');
-            if (addedLines.length === 0)
-                continue;
-            parsedFiles.push(parsed);
-            core.info(`  Scanning: ${prFile.filename} (${addedLines.length} added line(s))`);
-            for (const line of addedLines) {
-                const snippet = (0, diff_1.buildSnippet)(parsed.hunkLines, line.newLineNo);
-                const lineFindings = (0, rules_1.scanLineContent)(prFile.filename, line.newLineNo, line.content, snippet);
-                if (lineFindings.length > 0) {
-                    core.info(`    [!] ${lineFindings.length} finding(s) at line ${line.newLineNo}`);
-                }
-                allFindings.push(...lineFindings);
             }
+            chunksReviewed++;
+            llmDismissed += result.dismissed;
+            aiFindings.push(...result.newFindings);
         }
-        core.info(`  Rule scan complete: ${allFindings.length} finding(s)`);
-        // ── Stage 3: AI review pass (one LLM call per diff chunk) ─────────────
-        // Gives a verdict on each rule flag AND reports issues the rules missed.
-        // If the LLM is down or out of quota, that chunk keeps its rule results.
-        const ruleCount = allFindings.length;
-        let llmDismissed = 0;
-        let chunksReviewed = 0;
-        let chunksFailed = 0;
-        const aiFindings = [];
-        if (llmApiUrl) {
-            const cfg = { model: llmModel, url: llmApiUrl, key: llmApiKey };
-            const chunks = parsedFiles.flatMap(p => (0, review_1.buildChunks)(p, maxChunkChars));
-            core.info(`  AI review (model: ${llmModel}): ${chunks.length} chunk(s) of up to ${maxChunkChars} chars`);
-            for (const chunk of chunks) {
-                const flags = allFindings.filter(f => f.file === chunk.file && chunk.addedLines.has(f.line));
-                const result = await (0, review_1.reviewChunk)(chunk, flags, cfg);
-                if (!result) {
-                    chunksFailed++;
-                    core.warning(`AI review unavailable for ${chunk.file}:${chunk.firstLine}-${chunk.lastLine}; using rule results only.`);
-                    continue;
-                }
-                chunksReviewed++;
-                llmDismissed += result.dismissed;
-                aiFindings.push(...result.newFindings);
-            }
-            core.info(`  AI review: ${chunksReviewed}/${chunks.length} chunk(s) reviewed, ` +
-                `${llmDismissed} rule flag(s) dismissed, ${aiFindings.length} new issue(s) found`);
-        }
-        // Give AI findings the same code context the rule findings carry.
-        for (const f of aiFindings) {
-            const parsed = parsedFiles.find(p => p.path === f.file);
-            if (parsed)
-                f.snippet = (0, diff_1.buildSnippet)(parsed.hunkLines, f.line);
-        }
-        const scoredFindings = [
-            ...allFindings.filter(f => f.llmConfirmed !== false),
-            ...aiFindings,
-        ];
-        // ── Stage 4: scoring ───────────────────────────────────────────────────
-        const scores = (0, scorer_1.calculateScores)(scoredFindings);
-        const decision = (0, scorer_1.makeDecision)(scores, scoredFindings);
-        core.info(`  Decision: ${decision} | Overall: ${scores.overall}/100`);
-        // ── Stage 5: post GitHub PR review ────────────────────────────────────
-        // min-severity only hides low-priority inline comments; scores and the
-        // decision above still count every finding.
-        const visibleFindings = scoredFindings.filter(f => SEVERITY_ORDER[f.severity] <= SEVERITY_ORDER[minSeverity]);
-        // Rule findings first, AI-review findings last; each group most severe first.
-        // The 50-comment cap keeps the most critical findings from both groups.
-        const bySeverity = (a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity];
-        const ruleVisible = visibleFindings.filter(f => f.source !== 'ai').sort(bySeverity);
-        const aiVisible = visibleFindings.filter(f => f.source === 'ai').sort(bySeverity);
-        const aiSlots = Math.min(aiVisible.length, Math.max(10, 50 - ruleVisible.length));
-        const sortedFindings = [...ruleVisible.slice(0, 50 - aiSlots), ...aiVisible.slice(0, aiSlots)];
-        const inlineComments = sortedFindings.map(f => ({
-            path: f.file,
-            line: f.line,
-            side: 'RIGHT',
-            body: (0, github_1.buildInlineComment)(f),
-        }));
-        const riskPanel = (0, github_1.buildRiskPanel)(scores, decision, scoredFindings, {
+        core.info(`  AI review: ${chunksReviewed}/${chunks.length} chunk(s) reviewed, ` +
+            `${llmDismissed} rule flag(s) dismissed, ${aiFindings.length} new issue(s) found`);
+    }
+    // Give AI findings the same code context the rule findings carry.
+    for (const f of aiFindings) {
+        const parsed = parsedFiles.find(p => p.path === f.file);
+        if (parsed)
+            f.snippet = (0, diff_1.buildSnippet)(parsed.hunkLines, f.line);
+    }
+    const scoredFindings = [...allFindings.filter(f => f.llmConfirmed !== false), ...aiFindings];
+    // ── Stage 4: scoring ───────────────────────────────────────────────────
+    const scores = (0, scorer_1.calculateScores)(scoredFindings);
+    const decision = (0, scorer_1.makeDecision)(scores, scoredFindings);
+    core.info(`  Decision: ${decision} | Overall: ${scores.overall}/100`);
+    // min-severity only hides low-priority comments; scores and the decision
+    // above still count every finding. Rule findings first, AI findings last;
+    // each group most severe first. The 50-item cap keeps the most critical.
+    const bySeverity = (a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity];
+    const shown = scoredFindings.filter(f => SEVERITY_ORDER[f.severity] <= SEVERITY_ORDER[s.minSeverity]);
+    const ruleVisible = shown.filter(f => f.source !== 'ai').sort(bySeverity);
+    const aiVisible = shown.filter(f => f.source === 'ai').sort(bySeverity);
+    const aiSlots = Math.min(aiVisible.length, Math.max(10, 50 - ruleVisible.length));
+    const visibleFindings = [...ruleVisible.slice(0, 50 - aiSlots), ...aiVisible.slice(0, aiSlots)];
+    const aiUsed = Boolean(s.llmApiUrl) && chunksReviewed > 0;
+    return {
+        parsedFiles,
+        scoredFindings,
+        visibleFindings,
+        scores,
+        decision,
+        aiUsed,
+        stats: {
             ruleFlags: ruleCount,
             dismissed: llmDismissed,
             aiFound: aiFindings.length,
-            aiUsed: Boolean(llmApiUrl) && chunksReviewed > 0,
+            aiUsed,
             aiPartial: chunksFailed > 0,
-            hidden: scoredFindings.length - visibleFindings.length,
-            minSeverity,
-        });
-        await (0, github_1.postReview)(octokit, owner, repoName, pullNumber, commitSha, riskPanel, inlineComments);
-        core.info(`  Posted review with ${inlineComments.length} inline comment(s)`);
-        // ── Stage 6: GitHub Actions job summary ───────────────────────────────
-        await core.summary.addRaw(riskPanel).write();
-        // ── Stage 6b: optional dashboard ──────────────────────────────────────
-        if (dashboardUrl && dashboardToken) {
-            // Dashboard evidence: a few numbered lines centred on each finding.
-            const dashboardFindings = scoredFindings.map(f => {
-                const parsed = parsedFiles.find(p => p.path === f.file);
-                const numbered = parsed ? (0, diff_1.buildNumberedSnippet)(parsed.hunkLines, f.line) : '';
-                return { ...f, snippet: numbered || f.snippet };
-            });
-            const report = (0, report_1.buildReport)({
-                scannedDirectory: `${owner}/${repoName}#${pullNumber}`,
-                totalFiles: parsedFiles.length,
-                findings: dashboardFindings,
-                scores,
-                decision,
-                extra: {
-                    source: 'action',
-                    pr: {
-                        repo: `${owner}/${repoName}`,
-                        number: pullNumber,
-                        title: String(pullRequest.title ?? ''),
-                        url: String(pullRequest.html_url ?? ''),
-                        commitSha,
-                        author: String(pullRequest.user?.login ?? ''),
-                    },
-                    pipeline: {
-                        ruleFlags: ruleCount,
-                        aiDismissed: llmDismissed,
-                        aiFound: aiFindings.length,
-                        aiUsed: Boolean(llmApiUrl) && chunksReviewed > 0,
-                        model: llmApiUrl ? llmModel : undefined,
-                    },
-                },
-            });
-            const sent = await (0, report_1.sendToDashboard)(dashboardUrl, dashboardToken, report);
-            if (sent.ok)
-                core.info(`  Sent report to dashboard (${sent.message.split(' ')[1] ?? 'ok'})`);
-            else
-                core.warning(`Could not send report to dashboard: ${sent.message}`);
+            hidden: scoredFindings.length - shown.length,
+            minSeverity: s.minSeverity,
+        },
+    };
+}
+/** Sends the review to the dashboard, if one is configured. Never fails the run. */
+async function report(s, r, scannedDirectory, extra) {
+    if (!s.dashboardUrl || !s.dashboardToken)
+        return;
+    // Dashboard evidence: a few numbered lines centred on each finding.
+    const findings = r.scoredFindings.map(f => {
+        const parsed = r.parsedFiles.find(p => p.path === f.file);
+        const numbered = parsed ? (0, diff_1.buildNumberedSnippet)(parsed.hunkLines, f.line) : '';
+        return { ...f, snippet: numbered || f.snippet };
+    });
+    const rep = (0, report_1.buildReport)({
+        scannedDirectory,
+        totalFiles: r.parsedFiles.length,
+        findings,
+        scores: r.scores,
+        decision: r.decision,
+        extra: {
+            source: 'action',
+            ...extra,
+            pipeline: {
+                ruleFlags: r.stats.ruleFlags,
+                aiDismissed: r.stats.dismissed,
+                aiFound: r.stats.aiFound,
+                aiUsed: r.aiUsed,
+                model: s.llmApiUrl ? s.llmModel : undefined,
+            },
+        },
+    });
+    const sent = await (0, report_1.sendToDashboard)(s.dashboardUrl, s.dashboardToken, rep);
+    if (sent.ok)
+        core.info(`  Sent report to dashboard (${sent.message.split(' ')[1] ?? 'ok'})`);
+    else
+        core.warning(`Could not send report to dashboard: ${sent.message}`);
+}
+function finish(s, r, where) {
+    core.setOutput('decision', r.decision);
+    core.setOutput('overall-score', String(r.scores.overall));
+    if (s.strictMode && r.decision !== 'Safe to Merge') {
+        const crit = r.scoredFindings.filter(f => f.severity === 'CRITICAL').length;
+        core.setFailed(`PrivGuard Nexus: ${r.decision} — ${r.scoredFindings.length} finding(s) detected (including ${crit} critical). ${where}`);
+    }
+}
+// ── Pull request mode: review before merging ─────────────────────────────
+async function runPullRequest(s, octokit) {
+    const { payload, repo } = github.context;
+    const pr = payload.pull_request;
+    const pullNumber = pr.number;
+    const commitSha = pr.head.sha;
+    const { owner, repo: repoName } = repo;
+    core.info(`[PrivGuard Nexus] PR #${pullNumber} — ${owner}/${repoName} @ ${commitSha.slice(0, 7)}`);
+    const files = await (0, github_1.fetchPRFiles)(octokit, owner, repoName, pullNumber);
+    core.info(`  ${files.length} file(s) in diff`);
+    const r = await reviewFiles(files, s);
+    const comments = r.visibleFindings.map(f => ({
+        path: f.file,
+        line: f.line,
+        side: 'RIGHT',
+        body: (0, github_1.buildInlineComment)(f),
+    }));
+    const panel = (0, github_1.buildRiskPanel)(r.scores, r.decision, r.scoredFindings, r.stats);
+    await (0, github_1.postReview)(octokit, owner, repoName, pullNumber, commitSha, panel, comments);
+    core.info(`  Posted review with ${comments.length} inline comment(s)`);
+    await core.summary.addRaw(panel).write();
+    await report(s, r, `${owner}/${repoName}#${pullNumber}`, {
+        trigger: 'pull_request',
+        pr: {
+            repo: `${owner}/${repoName}`,
+            number: pullNumber,
+            title: String(pr.title ?? ''),
+            url: String(pr.html_url ?? ''),
+            commitSha,
+            author: String(pr.user?.login ?? ''),
+        },
+    });
+    finish(s, r, 'Review inline comments for details.');
+}
+// ── Push mode: review what a push to the branch changed ──────────────────
+async function runPush(s, octokit) {
+    const { payload, repo } = github.context;
+    const { owner, repo: repoName } = repo;
+    const after = String(payload.after ?? github.context.sha);
+    const before = String(payload.before ?? '');
+    const branch = String(payload.ref ?? '').replace(/^refs\/heads\//, '');
+    if (payload.deleted || /^0+$/.test(after)) {
+        core.info('PrivGuard Nexus: branch deleted — nothing to review.');
+        return;
+    }
+    core.info(`[PrivGuard Nexus] Push to ${branch} — ${owner}/${repoName} @ ${after.slice(0, 7)}`);
+    // A merged pull request was already reviewed in PR mode; don't review it twice.
+    const mergedPr = await (0, github_1.findMergedPullRequest)(octokit, owner, repoName, after);
+    if (mergedPr) {
+        core.info(`  This push merges PR #${mergedPr}, which PrivGuard already reviewed — skipping.`);
+        return;
+    }
+    const files = await (0, github_1.fetchPushFiles)(octokit, owner, repoName, before, after);
+    core.info(`  ${files.length} file(s) changed by this push`);
+    const r = await reviewFiles(files, s);
+    const head = (payload.head_commit ?? {});
+    const commitCount = Array.isArray(payload.commits) ? payload.commits.length : 1;
+    const panel = (0, github_1.buildRiskPanel)(r.scores, r.decision, r.scoredFindings, r.stats);
+    // One summary comment on the pushed commit (skipped when there's nothing to report).
+    if (r.scoredFindings.length > 0) {
+        const body = [
+            panel,
+            '',
+            `> This push is already on \`${branch}\`. Fix these in a follow-up commit, or use a pull request next time to catch them before they land.`,
+            '',
+            r.visibleFindings.length
+                ? (0, github_1.buildFindingsTable)(r.visibleFindings, owner, repoName, after)
+                : `_All findings are below the ${s.minSeverity} threshold._`,
+        ].join('\n');
+        await (0, github_1.postCommitComment)(octokit, owner, repoName, after, body);
+        core.info(`  Posted a commit comment with ${r.visibleFindings.length} finding(s)`);
+    }
+    else {
+        core.info('  No findings — no commit comment needed.');
+    }
+    await core.summary.addRaw(panel).write();
+    await report(s, r, `${owner}/${repoName}@${branch}`, {
+        trigger: 'push',
+        push: {
+            repo: `${owner}/${repoName}`,
+            branch,
+            commitSha: after,
+            url: head.url || `https://github.com/${owner}/${repoName}/commit/${after}`,
+            message: String(head.message ?? '').split('\n')[0].slice(0, 300),
+            author: String(head.author?.username || head.author?.name || payload.pusher?.name || ''),
+            commitCount,
+        },
+    });
+    finish(s, r, 'See the comment on the commit for details.');
+}
+async function run() {
+    try {
+        const s = readSettings();
+        const octokit = github.getOctokit(core.getInput('github-token', { required: true }));
+        const event = github.context.eventName;
+        if (github.context.payload.pull_request) {
+            await runPullRequest(s, octokit);
         }
-        // ── Stage 7: action outputs and optional failure ───────────────────────
-        core.setOutput('decision', decision);
-        core.setOutput('overall-score', String(scores.overall));
-        if (strictMode && decision !== 'Safe to Merge') {
-            const critCount = scoredFindings.filter(f => f.severity === 'CRITICAL').length;
-            const totalCount = scoredFindings.length;
-            core.setFailed(`PrivGuard Nexus: ${decision} — ${totalCount} finding(s) detected (including ${critCount} critical). Review inline comments for details.`);
+        else if (event === 'push') {
+            await runPush(s, octokit);
+        }
+        else {
+            core.info(`PrivGuard Nexus: "${event}" events aren't reviewed (use pull_request or push) — skipping.`);
         }
     }
     catch (err) {
@@ -30260,6 +30351,10 @@ function chunkAddedLines(files, maxLinesPerChunk) {
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.fetchPRFiles = fetchPRFiles;
+exports.fetchPushFiles = fetchPushFiles;
+exports.findMergedPullRequest = findMergedPullRequest;
+exports.postCommitComment = postCommitComment;
+exports.buildFindingsTable = buildFindingsTable;
 exports.postReview = postReview;
 exports.buildRiskPanel = buildRiskPanel;
 exports.buildInlineComment = buildInlineComment;
@@ -30275,6 +30370,43 @@ async function fetchPRFiles(octokit, owner, repo, pullNumber) {
         patch: f.patch,
         status: f.status,
     }));
+}
+/**
+ * Files changed by a push. Compares the previous tip with the new one; for a
+ * brand-new branch (no previous tip) it uses the pushed commit's own changes.
+ */
+async function fetchPushFiles(octokit, owner, repo, before, after) {
+    const isNewBranch = !before || /^0+$/.test(before);
+    const files = isNewBranch
+        ? (await octokit.rest.repos.getCommit({ owner, repo, ref: after })).data.files ?? []
+        : (await octokit.rest.repos.compareCommitsWithBasehead({ owner, repo, basehead: `${before}...${after}` })).data.files ?? [];
+    return files.map(f => ({ filename: f.filename, patch: f.patch, status: f.status }));
+}
+/** If this commit is the result of merging a pull request, returns that PR's number. */
+async function findMergedPullRequest(octokit, owner, repo, sha) {
+    try {
+        const { data } = await octokit.rest.repos.listPullRequestsAssociatedWithCommit({ owner, repo, commit_sha: sha });
+        const merged = data.find(pr => pr.merged_at && pr.merge_commit_sha === sha);
+        return merged ? merged.number : null;
+    }
+    catch {
+        return null;
+    }
+}
+async function postCommitComment(octokit, owner, repo, sha, body) {
+    await octokit.rest.repos.createCommitComment({ owner, repo, commit_sha: sha, body });
+}
+/** Markdown table of findings for a push, each linked to its line at that commit. */
+function buildFindingsTable(findings, owner, repo, sha) {
+    const sevEmoji = { CRITICAL: '🔴', HIGH: '🟠', MEDIUM: '🟡', LOW: '🟢' };
+    const esc = (s) => s.replace(/\|/g, '\\|').replace(/\n/g, ' ');
+    const rows = findings.map(f => {
+        const link = `https://github.com/${owner}/${repo}/blob/${sha}/${f.file}#L${f.line}`;
+        const what = f.source === 'ai' ? `🤖 ${esc(f.ruleTriggered)}` : `\`${f.ruleId}\` ${esc(f.ruleTriggered)}`;
+        const fix = esc(f.llmFix || f.recommendation);
+        return `| ${sevEmoji[f.severity] ?? '⚠️'} ${f.severity} | [${esc(f.file)}:${f.line}](${link}) | ${what} | ${fix} |`;
+    });
+    return ['| Severity | Where | Finding | Suggested fix |', '|---|---|---|---|', ...rows].join('\n');
 }
 async function postReview(octokit, owner, repo, pullNumber, commitSha, bodyMarkdown, comments) {
     await octokit.rest.pulls.createReview({
@@ -30378,6 +30510,48 @@ function buildInlineComment(finding) {
     if (finding.llmIntent)
         lines.push('', `**Intent:** \`${finding.llmIntent}\``);
     return lines.join('\n');
+}
+
+
+/***/ }),
+
+/***/ 5667:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.makeIgnoreMatcher = makeIgnoreMatcher;
+/**
+ * Files PrivGuard skips: generated bundles, dependencies, lockfiles and binary
+ * assets. Reviewing them adds noise (e.g. a rebuilt dist/index.js) and no value.
+ */
+const DEFAULT_IGNORES = [
+    /(^|\/)(dist|build|out|node_modules|vendor|coverage|\.next)\//,
+    /\.min\.(js|css)$/,
+    /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|poetry\.lock|Cargo\.lock|go\.sum)$/,
+    /\.(map|snap|svg|png|jpe?g|gif|ico|webp|pdf|zip|woff2?|ttf|db)$/i,
+];
+/** Turns a simple glob ("docs/**", "*.md") into a regex. */
+function globToRegex(glob) {
+    const escaped = glob
+        .trim()
+        .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+        .replace(/\*\*/g, "\u0000")
+        .replace(/\*/g, "[^/]*")
+        .replace(/\?/g, "[^/]")
+        .replace(/\u0000/g, ".*");
+    return new RegExp(`^${escaped}$`);
+}
+/** Builds a matcher from the defaults plus the comma/newline-separated `ignore-paths` input. */
+function makeIgnoreMatcher(extra) {
+    const custom = extra
+        .split(/[,\n]/)
+        .map(s => s.trim())
+        .filter(Boolean)
+        .map(globToRegex);
+    const all = [...DEFAULT_IGNORES, ...custom];
+    return (path) => all.some(re => re.test(path));
 }
 
 

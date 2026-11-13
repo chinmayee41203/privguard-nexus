@@ -56,6 +56,16 @@ export interface PullRequestInfo {
   author: string;
 }
 
+export interface PushInfo {
+  repo: string;        // owner/name
+  branch: string;
+  commitSha: string;   // the pushed tip
+  url: string;         // link to the commit
+  message: string;     // first line of the tip commit's message
+  author: string;
+  commitCount: number;
+}
+
 export interface PipelineStats {
   ruleFlags: number;   // findings raised by the rule engine
   aiDismissed: number; // rule flags the AI judged false positives
@@ -70,7 +80,10 @@ export interface PrivGuardReport {
   scannedDirectory: string;
   /** "action" for pull-request reviews, "cli" for local folder scans. */
   source?: "action" | "cli";
+  /** What the Action reviewed: a pull request or a push to a branch. */
+  trigger?: "pull_request" | "push";
   pr?: PullRequestInfo;
+  push?: PushInfo;
   pipeline?: PipelineStats;
   overallDecision: DecisionType;
   scores: Scores;

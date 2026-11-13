@@ -1,6 +1,6 @@
 # PrivGuard Nexus
 
-> **An AI code reviewer for pull requests.** PrivGuard Nexus is a GitHub Action that checks every PR for privacy leaks, security risks, hidden backdoors, prompt injection and risky code, then posts inline comments on the exact lines plus a Risk Intelligence Panel with a merge decision.
+> **An AI code reviewer for pull requests and pushes.** PrivGuard Nexus is a GitHub Action that checks every change for privacy leaks, security risks, hidden backdoors, prompt injection and risky code, then posts inline comments on the exact lines plus a Risk Intelligence Panel with a merge decision.
 
 🏆 **2nd Prize, Spyhacks Hackathon 2026**
 
@@ -23,6 +23,19 @@ It combines a fast rule engine with an LLM reviewer: the rules catch known patte
 
 ---
 
+## Two ways it guards your repo
+
+| | **Pull request mode** | **Push mode** |
+|---|---|---|
+| When | A PR is opened or updated | You push straight to `main` |
+| What it reviews | Everything the PR changes | Everything that push changed |
+| Where results go | Inline comments on the PR + Risk Panel | One comment on the pushed commit, with each finding linked to its line |
+| Can it stop bad code? | Yes: strict mode blocks the merge | It warns: the commit gets a red ❌ and you fix it in a follow-up |
+
+Both run the same pipeline (rules → AI review → scoring) and both report to the dashboard. When a pull request is merged, the resulting push is **skipped**, because it was already reviewed in the PR. Generated files (`dist/`, `build/`, lockfiles, minified files, images) are always skipped; add more with `ignore-paths`.
+
+---
+
 ## How it works
 
 ```mermaid
@@ -35,7 +48,7 @@ flowchart LR
     D -. LLM unavailable .-> E
 ```
 
-1. **Fetch the diff:** reads only the lines the PR adds, through the GitHub API.
+1. **Fetch the diff:** reads only the lines the PR (or push) adds, through the GitHub API, skipping generated files.
 2. **Rule engine:** about 30 regex rules scan every added line, instantly and for free.
 3. **AI review pass:** the diff is split into chunks (`max-chunk-chars`). For each chunk, one LLM call returns strict JSON that (a) gives a verdict on every rule flag and (b) lists new issues with line, category, severity, reason and fix. Anything outside the PR's added lines, with invalid labels, or already flagged is discarded. The prompt treats code as untrusted, so text in a PR that tries to instruct the reviewer is reported, not followed.
 4. **Scoring:** privacy, security, AI-safety and backdoor scores (0 to 100) and a decision: **Safe to Merge**, **Needs Review** or **Do Not Merge**.
@@ -58,16 +71,18 @@ A free Google Gemini key from [Google AI Studio](https://aistudio.google.com/api
 name: PrivGuard Nexus
 
 on:
-  pull_request:
+  pull_request:                 # review PRs before they're merged
     types: [opened, synchronize, reopened]
+  push:                         # and direct pushes to main (optional)
+    branches: [main]
 
 jobs:
   review:
     name: AI Security Review
     runs-on: ubuntu-latest
     permissions:
-      pull-requests: write # to post review comments
-      contents: read
+      pull-requests: write # comment on pull requests
+      contents: write      # comment on pushed commits (push mode)
 
     steps:
       - uses: actions/checkout@v5
@@ -83,7 +98,7 @@ jobs:
           strict-mode: 'true'
 ```
 
-Open a pull request and PrivGuard reviews it within a minute or two.
+Open a pull request (or push to `main`) and PrivGuard reviews it within a minute or two. Only want PR reviews? Remove the `push:` lines and use `contents: read`.
 
 ### Inputs
 
@@ -95,6 +110,7 @@ Open a pull request and PrivGuard reviews it within a minute or two.
 | `llm-model` | No | `llama3:8b` | Model name, e.g. `gemini-2.5-flash` |
 | `min-severity` | No | `LOW` | Lowest severity that gets an inline comment: `LOW`, `MEDIUM`, `HIGH` or `CRITICAL`. Scores still count everything. |
 | `max-chunk-chars` | No | `12000` | Maximum size of each diff chunk sent to the LLM |
+| `ignore-paths` | No | `''` | Extra paths to skip, as globs separated by commas or new lines (e.g. `docs/**, *.md`). Generated files are always skipped. |
 | `strict-mode` | No | `false` | If `true`, fails the check unless the decision is "Safe to Merge" |
 | `dashboard-url` | No | `''` | URL of a PrivGuard Nexus dashboard to send each review to |
 | `dashboard-token` | No | `''` | Secret token the dashboard expects (store it as a repository secret) |
@@ -147,7 +163,8 @@ Versions are published by the [release workflow](.github/workflows/release.yml).
 
 ```
 action.yml                  GitHub Action definition (inputs, outputs)
-scanner/src/action.ts       Action entry point: the review pipeline
+scanner/src/action.ts       Action entry point: PR mode, push mode and the shared review pipeline
+scanner/src/ignore.ts       Generated-file skipping and ignore-paths
 scanner/src/rules.ts        Rule engine
 scanner/src/review.ts       AI review pass and diff chunking
 scanner/src/llm.ts          LLM client (OpenAI-compatible and Ollama, retries)

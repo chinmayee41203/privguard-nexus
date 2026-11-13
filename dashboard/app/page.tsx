@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { PrivGuardReport, Finding, FindingType, DecisionType } from "@/lib/reportTypes";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { PrivGuardReport, Finding, FindingType, DecisionType, Severity } from "@/lib/reportTypes";
 import { DEMO_SCENARIOS } from "@/lib/demoData";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -40,13 +40,50 @@ const REPO_URL = "https://github.com/chinmayee41203/privguard-nexus";
 const DEMO_PR_URL = `${REPO_URL}/pull/2`;
 
 function reviewLabel(r: PrivGuardReport): string {
-  return r.pr ? `${r.pr.repo} #${r.pr.number}` : r.scannedDirectory;
+  if (r.pr) return `${r.pr.repo} #${r.pr.number}`;
+  if (r.push) return `${r.push.repo} · push to ${r.push.branch} @ ${r.push.commitSha.slice(0, 7)}`;
+  return r.scannedDirectory;
 }
 
-// ── PullRequestCard ───────────────────────────────────────────────────────────
+function reviewTitle(r: PrivGuardReport): string | undefined {
+  return r.pr?.title || r.push?.message || undefined;
+}
+
+// ── Review context: the pull request or push that was reviewed ───────────────
+
+function PushCard({ r }: { r: PrivGuardReport }) {
+  if (!r.push) return null;
+  const { push } = r;
+  return (
+    <div className="glass p-4 flex items-center justify-between flex-wrap gap-3">
+      <div className="min-w-0">
+        <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-1">
+          Push to <span className="font-mono normal-case tracking-normal text-gray-300">{push.branch}</span> reviewed
+        </p>
+        <p className="text-sm font-semibold text-gray-100 truncate">{push.message || "(no commit message)"}</p>
+        <p className="text-xs text-gray-500 font-mono mt-0.5">
+          {push.repo} · {push.commitSha.slice(0, 7)}
+          {push.author && <> · by {push.author}</>}
+          {" · "}{new Date(r.timestamp).toLocaleString()}
+        </p>
+        <p className="text-xs text-amber-300/70 mt-1">Already on {push.branch}: findings are fixed in a follow-up commit.</p>
+      </div>
+      {push.url && (
+        <a
+          href={push.url}
+          target="_blank"
+          rel="noreferrer"
+          className="text-xs px-3 py-1.5 rounded-lg border border-indigo-500/40 text-indigo-300 hover:bg-indigo-500/10 transition-colors shrink-0"
+        >
+          View commit ↗
+        </a>
+      )}
+    </div>
+  );
+}
 
 function PullRequestCard({ r }: { r: PrivGuardReport }) {
-  if (!r.pr) return null;
+  if (!r.pr) return <PushCard r={r} />;
   const { pr } = r;
   return (
     <div className="glass p-4 flex items-center justify-between flex-wrap gap-3">
@@ -291,7 +328,20 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [activeDemo, setActiveDemo] = useState<string | null>(null);
   const [filter, setFilter] = useState<FindingType | "all">("all");
+  const [sevFilter, setSevFilter] = useState<Severity | "all">("all");
   const [history, setHistory] = useState<PrivGuardReport[]>([]);
+  const findingsRef = useRef<HTMLDivElement>(null);
+
+  /** Clicking a severity badge: show only that severity and jump to the findings list. */
+  const showSeverity = (sev: Severity) => {
+    setSevFilter((cur) => (cur === sev ? "all" : sev));
+    requestAnimationFrame(() => findingsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  };
+
+  const resetFilters = () => {
+    setFilter("all");
+    setSevFilter("all");
+  };
 
   const loadLatest = useCallback(async () => {
     try {
@@ -314,11 +364,12 @@ export default function Dashboard() {
   const selectDemo = (key: string) => {
     setActiveDemo(key);
     setReport(DEMO_SCENARIOS[key].report);
-    setFilter("all");
+    resetFilters();
   };
 
   const clearDemo = () => {
     setActiveDemo(null);
+    resetFilters();
     if (history.length > 0) setReport(history[0]);
     else setReport(null);
   };
@@ -326,6 +377,7 @@ export default function Dashboard() {
   const displayed = report;
   const filteredFindings = (displayed?.findings ?? [])
     .filter((f) => filter === "all" || f.type === filter)
+    .filter((f) => sevFilter === "all" || f.severity === sevFilter)
     .sort((a, b) => (SEV_ORDER[a.severity] ?? 9) - (SEV_ORDER[b.severity] ?? 9));
 
   const catCounts = (displayed?.summary.byCategory) ?? { quality: 0, security: 0, privacy: 0, ai_safety: 0, backdoor: 0 };
@@ -352,7 +404,7 @@ export default function Dashboard() {
               PrivGuard Nexus
             </h1>
             <p className="text-xs text-gray-500 mt-0.5">
-              AI code review for pull requests · every review from the GitHub Action lands here
+              AI code review for pull requests and pushes · every review from the GitHub Action lands here
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap justify-end">
@@ -402,7 +454,7 @@ export default function Dashboard() {
             <div className="text-5xl">🔍</div>
             <h2 className="text-xl font-bold text-gray-200">No reviews yet</h2>
             <p className="text-gray-400 text-sm max-w-lg mx-auto">
-              Reviews appear here automatically when the PrivGuard Nexus GitHub Action checks a pull request
+              Reviews appear here automatically when the PrivGuard Nexus GitHub Action checks a pull request or a push
               (with <code className="text-indigo-300">dashboard-url</code> and <code className="text-indigo-300">dashboard-token</code> set).
               Meanwhile, pick a demo scenario above.
             </p>
@@ -451,18 +503,31 @@ export default function Dashboard() {
                 <ScoreGauge label="AI Safety"     score={displayed.scores.aiSafety} />
                 <ScoreGauge label="Backdoor Risk" score={displayed.scores.backdoorRisk} />
               </div>
-              {/* Severity breakdown */}
-              <div className="mt-5 pt-4 border-t border-white/5 flex flex-wrap gap-3">
-                {[
-                  { label: "Critical", count: displayed.summary.criticalCount, cls: "badge-critical" },
-                  { label: "High",     count: displayed.summary.highCount,     cls: "badge-high" },
-                  { label: "Medium",   count: displayed.summary.mediumCount,   cls: "badge-medium" },
-                  { label: "Low",      count: displayed.summary.lowCount,      cls: "badge-low" },
-                ].map(({ label, count, cls }) => (
-                  <span key={label} className={`text-xs font-semibold px-3 py-1 rounded-full ${cls}`}>
+              {/* Severity breakdown: click to filter the findings list */}
+              <div className="mt-5 pt-4 border-t border-white/5 flex flex-wrap items-center gap-3">
+                {([
+                  { sev: "CRITICAL", label: "Critical", count: displayed.summary.criticalCount, cls: "badge-critical" },
+                  { sev: "HIGH",     label: "High",     count: displayed.summary.highCount,     cls: "badge-high" },
+                  { sev: "MEDIUM",   label: "Medium",   count: displayed.summary.mediumCount,   cls: "badge-medium" },
+                  { sev: "LOW",      label: "Low",      count: displayed.summary.lowCount,      cls: "badge-low" },
+                ] as const).map(({ sev, label, count, cls }) => (
+                  <button
+                    key={label}
+                    type="button"
+                    disabled={count === 0}
+                    onClick={() => showSeverity(sev)}
+                    aria-pressed={sevFilter === sev}
+                    title={count === 0 ? `No ${label.toLowerCase()} findings` : `Show only ${label.toLowerCase()} findings`}
+                    className={`text-xs font-semibold px-3 py-1 rounded-full transition-all ${cls} ${
+                      count === 0
+                        ? "opacity-40 cursor-default"
+                        : "cursor-pointer hover:brightness-125 hover:-translate-y-px"
+                    } ${sevFilter === sev ? "ring-2 ring-white/60 ring-offset-2 ring-offset-transparent" : ""}`}
+                  >
                     {count} {label}
-                  </span>
+                  </button>
                 ))}
+                <span className="text-xs text-gray-600">Click a severity to see those findings</span>
               </div>
             </div>
 
@@ -473,11 +538,23 @@ export default function Dashboard() {
             <PrivacyDiffTimeline report={displayed} diff={displayed.privacyDiff} />
 
             {/* ── Findings ─────────────────────────────────────────────────── */}
-            <div className="space-y-3">
+            <div ref={findingsRef} className="space-y-3 scroll-mt-6">
               <div className="flex items-center justify-between flex-wrap gap-2">
-                <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest">
-                  Findings ({filteredFindings.length})
-                </p>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest">
+                    Findings ({filteredFindings.length})
+                  </p>
+                  {sevFilter !== "all" && (
+                    <button
+                      type="button"
+                      onClick={() => setSevFilter("all")}
+                      className={`text-xs font-semibold px-2.5 py-0.5 rounded-full badge-${sevFilter.toLowerCase()} hover:brightness-125`}
+                      title="Show all severities"
+                    >
+                      {sevFilter.charAt(0) + sevFilter.slice(1).toLowerCase()} only ✕
+                    </button>
+                  )}
+                </div>
                 <div className="flex flex-wrap gap-2">
                   <button
                     onClick={() => setFilter("all")}
@@ -503,8 +580,15 @@ export default function Dashboard() {
                 <div className="glass p-8 text-center">
                   <p className="text-emerald-400 text-4xl mb-2">✅</p>
                   <p className="text-gray-300 font-semibold">
-                    {filter === "all" ? "No findings detected" : `No ${CAT_LABELS[filter as FindingType]} issues found`}
+                    {filter === "all" && sevFilter === "all"
+                      ? "No findings detected"
+                      : "No findings match this filter"}
                   </p>
+                  {(filter !== "all" || sevFilter !== "all") && (
+                    <button type="button" onClick={resetFilters} className="mt-3 text-xs text-indigo-300 hover:text-indigo-200">
+                      Clear filters
+                    </button>
+                  )}
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -525,7 +609,7 @@ export default function Dashboard() {
                 return (
                   <button
                     key={i}
-                    onClick={() => { setReport(r); setFilter("all"); }}
+                    onClick={() => { setReport(r); resetFilters(); }}
                     className={`w-full glass card-hover text-left p-3 flex items-center justify-between gap-4 ${
                       report === r ? "ring-1 ring-indigo-500/40" : ""
                     }`}
@@ -537,8 +621,8 @@ export default function Dashboard() {
                           {r.overallDecision}
                         </p>
                         <p className="text-xs text-gray-500">
-                          {reviewLabel(r)}
-                          {r.pr?.title && <span className="text-gray-600"> · {r.pr.title}</span>}
+                          {r.push ? "⤴ " : r.pr ? "⇄ " : ""}{reviewLabel(r)}
+                          {reviewTitle(r) && <span className="text-gray-600"> · {reviewTitle(r)}</span>}
                         </p>
                       </div>
                     </div>

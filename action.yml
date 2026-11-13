@@ -30,6 +30,14 @@ inputs:
     description: 'Maximum size of each diff chunk sent to the LLM, so large PRs fit within context limits'
     required: false
     default: '12000'
+  dashboard-url:
+    description: 'Base URL of a PrivGuard Nexus dashboard to send each review to (optional)'
+    required: false
+    default: ''
+  dashboard-token:
+    description: 'Secret token the dashboard expects for saving reports (optional)'
+    required: false
+    default: ''
 
 outputs:
   decision:

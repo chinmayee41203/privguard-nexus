@@ -70,7 +70,7 @@ jobs:
       contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Run PrivGuard Nexus
         uses: chinmayee41203/privguard-nexus@v1
@@ -96,6 +96,8 @@ Open a pull request and PrivGuard reviews it within a minute or two.
 | `min-severity` | No | `LOW` | Lowest severity that gets an inline comment: `LOW`, `MEDIUM`, `HIGH` or `CRITICAL`. Scores still count everything. |
 | `max-chunk-chars` | No | `12000` | Maximum size of each diff chunk sent to the LLM |
 | `strict-mode` | No | `false` | If `true`, fails the check unless the decision is "Safe to Merge" |
+| `dashboard-url` | No | `''` | URL of a PrivGuard Nexus dashboard to send each review to |
+| `dashboard-token` | No | `''` | Secret token the dashboard expects (store it as a repository secret) |
 
 ### Outputs
 
@@ -112,6 +114,12 @@ Open a pull request and PrivGuard reviews it within a minute or two.
 | OpenAI | `https://api.openai.com` | `gpt-4o-mini` |
 | Groq | `https://api.groq.com/openai` | `llama-3.3-70b-versatile` |
 | OpenRouter | `https://openrouter.ai/api` | any listed model |
+
+---
+
+## Dashboard
+
+The [`dashboard/`](dashboard) folder is a Next.js + Prisma + Postgres app that collects every review the Action posts: decision, risk scores, the review pipeline (rule flags, AI-dismissed false positives, AI-found issues), a privacy-impact timeline and each finding with its evidence and fix. Saving a review requires a secret token; viewing is public. See [dashboard/README.md](dashboard/README.md) to deploy your own on Vercel with a free Neon database.
 
 ---
 
@@ -145,6 +153,9 @@ scanner/src/review.ts       AI review pass and diff chunking
 scanner/src/llm.ts          LLM client (OpenAI-compatible and Ollama, retries)
 scanner/src/scorer.ts       Risk scores and merge decision
 scanner/src/github.ts       PR review comments and Risk Intelligence Panel
+scanner/src/report.ts       Shared report format and dashboard upload
 scanner/src/index.ts        Local CLI
 scanner/dist/index.js       Bundled action (built with ncc)
+dashboard/                  Next.js dashboard (Prisma + Postgres)
+demo/                       (demo branch only) deliberately risky code for the showcase PR
 ```

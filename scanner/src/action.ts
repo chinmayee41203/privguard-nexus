@@ -6,6 +6,7 @@ import { scanLineContent } from './rules';
 import { buildChunks, reviewChunk } from './review';
 import { calculateScores, makeDecision } from './scorer';
 import { fetchPRFiles, postReview, buildRiskPanel, buildInlineComment } from './github';
+import { buildReport, sendToDashboard } from './report';
 import { Finding, Severity } from './types';
 
 const SEVERITY_ORDER: Record<string, number> = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
@@ -20,6 +21,8 @@ async function run(): Promise<void> {
     const minSeverityInput = (core.getInput('min-severity') || 'LOW').toUpperCase();
     const minSeverity = (minSeverityInput in SEVERITY_ORDER ? minSeverityInput : 'LOW') as Severity;
     const maxChunkChars = Math.max(2000, parseInt(core.getInput('max-chunk-chars') || '12000', 10) || 12000);
+    const dashboardUrl   = core.getInput('dashboard-url');
+    const dashboardToken = core.getInput('dashboard-token');
 
     const { payload, repo } = github.context;
     const pullRequest = payload.pull_request;
@@ -101,6 +104,12 @@ async function run(): Promise<void> {
       );
     }
 
+    // Give AI findings the same code context the rule findings carry.
+    for (const f of aiFindings) {
+      const parsed = parsedFiles.find(p => p.path === f.file);
+      if (parsed) f.snippet = buildSnippet(parsed.hunkLines, f.line);
+    }
+
     const scoredFindings = [
       ...allFindings.filter(f => f.llmConfirmed !== false),
       ...aiFindings,
@@ -148,6 +157,38 @@ async function run(): Promise<void> {
 
     // ── Stage 6: GitHub Actions job summary ───────────────────────────────
     await core.summary.addRaw(riskPanel).write();
+
+    // ── Stage 6b: optional dashboard ──────────────────────────────────────
+    if (dashboardUrl && dashboardToken) {
+      const report = buildReport({
+        scannedDirectory: `${owner}/${repoName}#${pullNumber}`,
+        totalFiles: parsedFiles.length,
+        findings: scoredFindings,
+        scores,
+        decision,
+        extra: {
+          source: 'action',
+          pr: {
+            repo: `${owner}/${repoName}`,
+            number: pullNumber,
+            title: String(pullRequest.title ?? ''),
+            url: String(pullRequest.html_url ?? ''),
+            commitSha,
+            author: String((pullRequest.user as { login?: string } | undefined)?.login ?? ''),
+          },
+          pipeline: {
+            ruleFlags: ruleCount,
+            aiDismissed: llmDismissed,
+            aiFound: aiFindings.length,
+            aiUsed: Boolean(llmApiUrl) && chunksReviewed > 0,
+            model: llmApiUrl ? llmModel : undefined,
+          },
+        },
+      });
+      const sent = await sendToDashboard(dashboardUrl, dashboardToken, report);
+      if (sent.ok) core.info(`  Sent report to dashboard (${sent.message.split(' ')[1] ?? 'ok'})`);
+      else core.warning(`Could not send report to dashboard: ${sent.message}`);
+    }
 
     // ── Stage 7: action outputs and optional failure ───────────────────────
     core.setOutput('decision', decision);

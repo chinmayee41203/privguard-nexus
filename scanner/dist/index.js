@@ -29969,6 +29969,7 @@ const rules_1 = __nccwpck_require__(3558);
 const review_1 = __nccwpck_require__(6701);
 const scorer_1 = __nccwpck_require__(3065);
 const github_1 = __nccwpck_require__(1454);
+const report_1 = __nccwpck_require__(9291);
 const SEVERITY_ORDER = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
 async function run() {
     try {
@@ -29980,6 +29981,8 @@ async function run() {
         const minSeverityInput = (core.getInput('min-severity') || 'LOW').toUpperCase();
         const minSeverity = (minSeverityInput in SEVERITY_ORDER ? minSeverityInput : 'LOW');
         const maxChunkChars = Math.max(2000, parseInt(core.getInput('max-chunk-chars') || '12000', 10) || 12000);
+        const dashboardUrl = core.getInput('dashboard-url');
+        const dashboardToken = core.getInput('dashboard-token');
         const { payload, repo } = github.context;
         const pullRequest = payload.pull_request;
         if (!pullRequest) {
@@ -30043,6 +30046,12 @@ async function run() {
             core.info(`  AI review: ${chunksReviewed}/${chunks.length} chunk(s) reviewed, ` +
                 `${llmDismissed} rule flag(s) dismissed, ${aiFindings.length} new issue(s) found`);
         }
+        // Give AI findings the same code context the rule findings carry.
+        for (const f of aiFindings) {
+            const parsed = parsedFiles.find(p => p.path === f.file);
+            if (parsed)
+                f.snippet = (0, diff_1.buildSnippet)(parsed.hunkLines, f.line);
+        }
         const scoredFindings = [
             ...allFindings.filter(f => f.llmConfirmed !== false),
             ...aiFindings,
@@ -30081,6 +30090,39 @@ async function run() {
         core.info(`  Posted review with ${inlineComments.length} inline comment(s)`);
         // ── Stage 6: GitHub Actions job summary ───────────────────────────────
         await core.summary.addRaw(riskPanel).write();
+        // ── Stage 6b: optional dashboard ──────────────────────────────────────
+        if (dashboardUrl && dashboardToken) {
+            const report = (0, report_1.buildReport)({
+                scannedDirectory: `${owner}/${repoName}#${pullNumber}`,
+                totalFiles: parsedFiles.length,
+                findings: scoredFindings,
+                scores,
+                decision,
+                extra: {
+                    source: 'action',
+                    pr: {
+                        repo: `${owner}/${repoName}`,
+                        number: pullNumber,
+                        title: String(pullRequest.title ?? ''),
+                        url: String(pullRequest.html_url ?? ''),
+                        commitSha,
+                        author: String(pullRequest.user?.login ?? ''),
+                    },
+                    pipeline: {
+                        ruleFlags: ruleCount,
+                        aiDismissed: llmDismissed,
+                        aiFound: aiFindings.length,
+                        aiUsed: Boolean(llmApiUrl) && chunksReviewed > 0,
+                        model: llmApiUrl ? llmModel : undefined,
+                    },
+                },
+            });
+            const sent = await (0, report_1.sendToDashboard)(dashboardUrl, dashboardToken, report);
+            if (sent.ok)
+                core.info(`  Sent report to dashboard (${sent.message.split(' ')[1] ?? 'ok'})`);
+            else
+                core.warning(`Could not send report to dashboard: ${sent.message}`);
+        }
         // ── Stage 7: action outputs and optional failure ───────────────────────
         core.setOutput('decision', decision);
         core.setOutput('overall-score', String(scores.overall));
@@ -30423,6 +30465,88 @@ async function analyzeWithLLM(file, line, snippet, model = "llama3:8b", llmUrl =
             intent: "accidental",
             unavailable: true,
         };
+    }
+}
+
+
+/***/ }),
+
+/***/ 9291:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.buildPrivacyDiff = buildPrivacyDiff;
+exports.buildReport = buildReport;
+exports.sendToDashboard = sendToDashboard;
+/** Shared by the CLI and the GitHub Action, so the dashboard gets one report format. */
+const CATEGORIES = ["quality", "security", "privacy", "ai_safety", "backdoor"];
+function buildPrivacyDiff(findings) {
+    const piiFields = new Set();
+    const thirdParties = new Set();
+    let loggingFindings = 0;
+    for (const f of findings) {
+        if (f.type !== "privacy")
+            continue;
+        if (f.ruleId === "P001" || f.ruleId === "P002" || f.ruleId === "P003")
+            loggingFindings++;
+        if (f.ruleId === "P006")
+            piiFields.add("credit_card");
+        if (f.ruleId === "P007")
+            piiFields.add("location/IP");
+        const urlMatch = f.snippet.match(/https?:\/\/([a-zA-Z0-9.\-]+)/);
+        if (urlMatch && f.ruleId === "P004")
+            thirdParties.add(urlMatch[1]);
+    }
+    const loggingRisk = loggingFindings >= 2 ? "high" : loggingFindings === 1 ? "medium" : "low";
+    return {
+        before: { piiFields: [], thirdParties: [], loggingRisk: "none" },
+        after: {
+            piiFields: Array.from(piiFields),
+            thirdParties: Array.from(thirdParties),
+            loggingRisk,
+        },
+        riskChangePct: Math.min(100, findings.filter((f) => f.type === "privacy").length * 12),
+    };
+}
+function buildReport(args) {
+    const { findings } = args;
+    const count = (sev) => findings.filter((f) => f.severity === sev).length;
+    const byCategory = CATEGORIES.reduce((acc, c) => ({ ...acc, [c]: findings.filter((f) => f.type === c).length }), {});
+    return {
+        version: "2.0",
+        timestamp: new Date().toISOString(),
+        scannedDirectory: args.scannedDirectory,
+        overallDecision: args.decision,
+        scores: args.scores,
+        findings,
+        privacyDiff: buildPrivacyDiff(findings),
+        summary: {
+            totalFiles: args.totalFiles,
+            totalFindings: findings.length,
+            criticalCount: count("CRITICAL"),
+            highCount: count("HIGH"),
+            mediumCount: count("MEDIUM"),
+            lowCount: count("LOW"),
+            byCategory,
+        },
+        ...args.extra,
+    };
+}
+/** Sends a report to a PrivGuard dashboard. Never throws: a dashboard outage must not fail a review. */
+async function sendToDashboard(url, token, report) {
+    try {
+        const res = await fetch(`${url.replace(/\/+$/, "")}/api/reports`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify(report),
+        });
+        const text = await res.text();
+        return { ok: res.ok, message: `HTTP ${res.status} ${text.slice(0, 200)}` };
+    }
+    catch (err) {
+        return { ok: false, message: err.message };
     }
 }
 

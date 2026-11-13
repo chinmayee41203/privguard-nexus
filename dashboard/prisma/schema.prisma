@@ -1,0 +1,78 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Neon (or any) Postgres. Set DATABASE_URL in Vercel → Project → Settings → Environment Variables.
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Report {
+  id                String    @id @default(cuid())
+  createdAt         DateTime  @default(now())
+  timestamp         String
+  scannedDirectory  String
+  overallDecision   String
+  overallScore      Int
+  privacyScore      Int
+  securityScore     Int
+  aiSafetyScore     Int
+  backdoorRiskScore Int
+  confidenceScore   Int
+  totalFiles        Int
+  totalFindings     Int
+  criticalCount     Int
+  highCount         Int
+  mediumCount       Int
+  lowCount          Int
+  qualityCount      Int       @default(0)
+  securityCount     Int       @default(0)
+  privacyCount      Int       @default(0)
+  aiSafetyCount     Int       @default(0)
+  backdoorCount     Int       @default(0)
+  privacyDiffJson   String?
+
+  // Where the report came from: "action" (pull-request review) or "cli" (local scan)
+  source            String    @default("cli")
+  repo              String?
+  prNumber          Int?
+  prTitle           String?
+  prUrl             String?
+  commitSha         String?
+  prAuthor          String?
+
+  // Review pipeline: what the rule engine and the AI review pass each did
+  ruleFlags         Int?
+  aiDismissed       Int?
+  aiFound           Int?
+  aiUsed            Boolean   @default(false)
+  model             String?
+
+  findings          Finding[]
+
+  @@index([createdAt])
+}
+
+model Finding {
+  id             String  @id @default(cuid())
+  findingId      String
+  type           String
+  severity       String
+  file           String
+  line           Int
+  snippet        String
+  ruleId         String  @default("")
+  ruleTriggered  String
+  recommendation String
+  whyItMatters   String  @default("")
+  llmReason      String?
+  llmFix         String?
+  llmIntent      String?
+  // "rule" (regex rule engine) or "ai" (found only by the AI review pass)
+  source         String  @default("rule")
+  reportId       String
+  report         Report  @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@index([reportId])
+}

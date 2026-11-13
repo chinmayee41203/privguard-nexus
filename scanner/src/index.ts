@@ -6,7 +6,8 @@ import { traverseDirectory, readFile } from "./traversal";
 import { scanFileContent } from "./rules";
 import { calculateScores, makeDecision } from "./scorer";
 import { analyzeWithLLM } from "./llm";
-import { Finding, FindingType, PrivGuardReport, PrivacyDiff } from "./types";
+import { buildPrivacyDiff } from "./report";
+import { Finding, FindingType, PrivGuardReport } from "./types";
 
 const program = new Command();
 
@@ -33,33 +34,6 @@ const CATEGORY_LABELS: Record<FindingType, string> = {
   ai_safety: "AI Safety",
   backdoor: "Backdoor",
 };
-
-function buildPrivacyDiff(findings: Finding[]): PrivacyDiff {
-  const piiFields = new Set<string>();
-  const thirdParties = new Set<string>();
-  let loggingFindings = 0;
-
-  for (const f of findings) {
-    if (f.type !== "privacy") continue;
-    if (f.ruleId === "P001" || f.ruleId === "P002" || f.ruleId === "P003") loggingFindings++;
-    if (f.ruleId === "P006") piiFields.add("credit_card");
-    if (f.ruleId === "P007") piiFields.add("location/IP");
-    const urlMatch = f.snippet.match(/https?:\/\/([a-zA-Z0-9.\-]+)/);
-    if (urlMatch && f.ruleId === "P004") thirdParties.add(urlMatch[1]);
-  }
-
-  const loggingRisk = loggingFindings >= 2 ? "high" : loggingFindings === 1 ? "medium" : "low";
-
-  return {
-    before: { piiFields: [], thirdParties: [], loggingRisk: "none" },
-    after: {
-      piiFields: Array.from(piiFields),
-      thirdParties: Array.from(thirdParties),
-      loggingRisk,
-    },
-    riskChangePct: Math.min(100, findings.filter((f) => f.type === "privacy").length * 12),
-  };
-}
 
 async function run() {
   const resolvedTarget = path.resolve(target);
@@ -148,6 +122,7 @@ async function run() {
     version: "2.0",
     timestamp: new Date().toISOString(),
     scannedDirectory: resolvedTarget,
+    source: "cli",
     overallDecision: decision,
     scores,
     findings: allFindings,

@@ -14,7 +14,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # LLM reasoning runs only when the LLM_API_KEY secret is set.
       # Defaults to Google Gemini's OpenAI-compatible API; override with the
@@ -29,6 +29,9 @@ jobs:
           llm-model:    ${{ vars.LLM_MODEL || 'gemini-2.5-flash' }}
           strict-mode:  'true'
           min-severity: 'MEDIUM'
+          # Optional: send each review to the live dashboard
+          dashboard-url:   ${{ vars.DASHBOARD_URL }}
+          dashboard-token: ${{ secrets.DASHBOARD_TOKEN }}
 
       - name: Echo decision
         if: always()

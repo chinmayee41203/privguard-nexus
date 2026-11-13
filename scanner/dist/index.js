@@ -1,5 +1,4 @@
-#!/usr/bin/env node
-/******/ (() => { // webpackBootstrap
+#!/usr/bin/env node/******/ (() => { // webpackBootstrap
 /******/ 	var __webpack_modules__ = ({
 
 /***/ 7980:
@@ -30092,10 +30091,16 @@ async function run() {
         await core.summary.addRaw(riskPanel).write();
         // ── Stage 6b: optional dashboard ──────────────────────────────────────
         if (dashboardUrl && dashboardToken) {
+            // Dashboard evidence: a few numbered lines centred on each finding.
+            const dashboardFindings = scoredFindings.map(f => {
+                const parsed = parsedFiles.find(p => p.path === f.file);
+                const numbered = parsed ? (0, diff_1.buildNumberedSnippet)(parsed.hunkLines, f.line) : '';
+                return { ...f, snippet: numbered || f.snippet };
+            });
             const report = (0, report_1.buildReport)({
                 scannedDirectory: `${owner}/${repoName}#${pullNumber}`,
                 totalFiles: parsedFiles.length,
-                findings: scoredFindings,
+                findings: dashboardFindings,
                 scores,
                 decision,
                 extra: {
@@ -30149,6 +30154,7 @@ run();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.parsePatch = parsePatch;
 exports.buildSnippet = buildSnippet;
+exports.buildNumberedSnippet = buildNumberedSnippet;
 exports.chunkAddedLines = chunkAddedLines;
 /**
  * Parses a GitHub pull request file patch (unified diff without the diff --git header)
@@ -30203,6 +30209,25 @@ function buildSnippet(hunkLines, targetLineNo) {
         .map(l => l.content)
         .join('\n')
         .slice(0, 1500);
+}
+/**
+ * Short, numbered snippet for the dashboard: `radius` lines either side of the
+ * target, with "›" marking the flagged line, e.g. "› 53 | res.sendFile(...)".
+ */
+function buildNumberedSnippet(hunkLines, targetLineNo, radius = 3) {
+    const visible = hunkLines.filter(l => l.type !== 'del');
+    const idx = visible.findIndex(l => l.newLineNo === targetLineNo);
+    if (idx === -1)
+        return '';
+    const width = String(visible[Math.min(visible.length - 1, idx + radius)].newLineNo).length;
+    return visible
+        .slice(Math.max(0, idx - radius), idx + radius + 1)
+        .map(l => {
+        const mark = l.newLineNo === targetLineNo ? '›' : ' ';
+        const text = l.content.length > 160 ? `${l.content.slice(0, 160)} …` : l.content;
+        return `${mark} ${String(l.newLineNo).padStart(width)} | ${text}`;
+    })
+        .join('\n');
 }
 /**
  * Splits the full list of added lines across all files into chunks of at most

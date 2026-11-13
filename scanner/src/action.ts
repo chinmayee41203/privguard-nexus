@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import * as core from '@actions/core';
 import * as github from '@actions/github';
-import { parsePatch, buildSnippet, ParsedFile } from './diff';
+import { parsePatch, buildSnippet, buildNumberedSnippet, ParsedFile } from './diff';
 import { scanLineContent } from './rules';
 import { buildChunks, reviewChunk } from './review';
 import { calculateScores, makeDecision } from './scorer';
@@ -160,10 +160,16 @@ async function run(): Promise<void> {
 
     // ── Stage 6b: optional dashboard ──────────────────────────────────────
     if (dashboardUrl && dashboardToken) {
+      // Dashboard evidence: a few numbered lines centred on each finding.
+      const dashboardFindings = scoredFindings.map(f => {
+        const parsed = parsedFiles.find(p => p.path === f.file);
+        const numbered = parsed ? buildNumberedSnippet(parsed.hunkLines, f.line) : '';
+        return { ...f, snippet: numbered || f.snippet };
+      });
       const report = buildReport({
         scannedDirectory: `${owner}/${repoName}#${pullNumber}`,
         totalFiles: parsedFiles.length,
-        findings: scoredFindings,
+        findings: dashboardFindings,
         scores,
         decision,
         extra: {

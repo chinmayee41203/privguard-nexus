@@ -69,6 +69,25 @@ export function buildSnippet(hunkLines: HunkLine[], targetLineNo: number): strin
 }
 
 /**
+ * Short, numbered snippet for the dashboard: `radius` lines either side of the
+ * target, with "›" marking the flagged line, e.g. "› 53 | res.sendFile(...)".
+ */
+export function buildNumberedSnippet(hunkLines: HunkLine[], targetLineNo: number, radius = 3): string {
+  const visible = hunkLines.filter(l => l.type !== 'del');
+  const idx = visible.findIndex(l => l.newLineNo === targetLineNo);
+  if (idx === -1) return '';
+  const width = String(visible[Math.min(visible.length - 1, idx + radius)].newLineNo).length;
+  return visible
+    .slice(Math.max(0, idx - radius), idx + radius + 1)
+    .map(l => {
+      const mark = l.newLineNo === targetLineNo ? '›' : ' ';
+      const text = l.content.length > 160 ? `${l.content.slice(0, 160)} …` : l.content;
+      return `${mark} ${String(l.newLineNo).padStart(width)} | ${text}`;
+    })
+    .join('\n');
+}
+
+/**
  * Splits the full list of added lines across all files into chunks of at most
  * maxLinesPerChunk entries. Useful for rate-limit-aware LLM batching.
  */

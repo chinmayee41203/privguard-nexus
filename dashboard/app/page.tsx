@@ -183,7 +183,7 @@ function IssueCard({ f }: { f: Finding }) {
           {f.snippet && (
             <div>
               <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Evidence</p>
-              <div className="snippet">{f.snippet.slice(0, 400)}</div>
+              <div className="snippet max-h-72 overflow-y-auto">{f.snippet.slice(0, 1500)}</div>
             </div>
           )}
           <div>

@@ -20,6 +20,8 @@ export interface Finding {
   llmFix?: string;
   llmIntent?: Intent;
   confidence?: number;
+  /** Where the finding came from: the regex rule engine (default) or the AI review pass. */
+  source?: "rule" | "ai";
 }
 
 export interface Scores {

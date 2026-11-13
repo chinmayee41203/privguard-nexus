@@ -1,0 +1,63 @@
+name: Release
+
+# Publishes a version of the PrivGuard Nexus action.
+# Push a tag like v1.0.0 (git tag v1.0.0 && git push origin v1.0.0) and this workflow:
+#   1. rebuilds the action bundle and fails if scanner/dist is out of date,
+#   2. creates a GitHub Release with auto-generated notes,
+#   3. moves the major tag (v1) to this version, so `uses: ...@v1` gets it.
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write # create the release and move the major tag
+
+jobs:
+  release:
+    name: Publish release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install and build
+        run: |
+          npm ci
+          npm run build
+
+      - name: Check the committed bundle is up to date
+        run: |
+          if ! git diff --quiet -- scanner/dist; then
+            echo "::error::scanner/dist is out of date. Run 'npm run build' and commit scanner/dist before tagging."
+            git diff --stat -- scanner/dist
+            exit 1
+          fi
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" \
+            --title "PrivGuard Nexus $TAG" \
+            --generate-notes \
+            --verify-tag
+
+      - name: Move the major version tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          MAJOR="${TAG%%.*}"   # v1.0.0 -> v1
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -fa "$MAJOR" -m "Point $MAJOR at $TAG"
+          git push origin "$MAJOR" --force

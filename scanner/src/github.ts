@@ -60,10 +60,21 @@ export async function postReview(
   });
 }
 
+export interface ReviewStats {
+  ruleFlags: number;
+  dismissed: number;
+  aiFound: number;
+  aiUsed: boolean;
+  aiPartial: boolean;
+  hidden: number;
+  minSeverity: string;
+}
+
 export function buildRiskPanel(
   scores: Scores,
   decision: DecisionType,
-  findings: Finding[]
+  findings: Finding[],
+  stats?: ReviewStats
 ): string {
   const decisionEmoji =
     decision === 'Safe to Merge' ? '✅' :
@@ -76,8 +87,24 @@ export function buildRiskPanel(
     low:      findings.filter(f => f.severity === 'LOW').length,
   };
 
+  const pipeline: string[] = [];
+  if (stats) {
+    pipeline.push('', '| Review pipeline | Result |', '|----------|-------|');
+    pipeline.push(`| Rule engine flags | ${stats.ruleFlags} |`);
+    if (stats.aiUsed) {
+      pipeline.push(`| Dismissed by AI as false positives | ${stats.dismissed} |`);
+      pipeline.push(`| New issues found by AI review | ${stats.aiFound} |`);
+    } else {
+      pipeline.push('| AI review | not run (rules only) |');
+    }
+    if (stats.aiPartial) pipeline.push('| Note | AI unavailable for part of the diff; rule results used there |');
+    if (stats.hidden > 0) {
+      pipeline.push(`| Hidden below min-severity (${stats.minSeverity}) | ${stats.hidden} |`);
+    }
+  }
+
   return [
-    '## PrivGuard Sentinel — Risk Intelligence Panel',
+    '## PrivGuard Nexus — Risk Intelligence Panel',
     '',
     `**Decision: ${decisionEmoji} ${decision}**`,
     '',
@@ -96,6 +123,7 @@ export function buildRiskPanel(
     `| 🟠 High     | ${sevCounts.high} |`,
     `| 🟡 Medium   | ${sevCounts.medium} |`,
     `| 🟢 Low      | ${sevCounts.low} |`,
+    ...pipeline,
     '',
     `*${findings.length} total finding(s) detected in this PR's diff.*`,
   ].join('\n');
@@ -110,8 +138,21 @@ export function buildInlineComment(finding: Finding): string {
   };
   const emoji = sevEmoji[finding.severity] ?? '⚠️';
 
+  if (finding.source === 'ai') {
+    const ai = [
+      `${emoji} **PrivGuard Nexus** — 🤖 AI review (${finding.severity.toLowerCase()}): ${finding.ruleTriggered}`,
+      '',
+      `**Why it matters:** ${finding.whyItMatters}`,
+      '',
+      `**Suggested fix:** ${finding.recommendation}`,
+    ];
+    if (finding.llmIntent) ai.push('', `**Intent:** \`${finding.llmIntent}\``);
+    ai.push('', '_Not covered by the rule engine; found by the AI review pass._');
+    return ai.join('\n');
+  }
+
   const lines = [
-    `${emoji} **PrivGuard Sentinel** — \`${finding.ruleId}\`: ${finding.ruleTriggered}`,
+    `${emoji} **PrivGuard Nexus** — \`${finding.ruleId}\`: ${finding.ruleTriggered}`,
     '',
     `**Why it matters:** ${finding.whyItMatters}`,
     '',

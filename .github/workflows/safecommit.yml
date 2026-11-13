@@ -1,12 +1,12 @@
-name: PrivGuard Sentinel — AI PR Review
+name: PrivGuard Nexus — AI PR Review
 
 on:
   pull_request:
     branches: [main, master, develop]
 
 jobs:
-  privguard-sentinel:
-    name: PrivGuard Sentinel
+  privguard-nexus:
+    name: PrivGuard Nexus
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write   # required to post inline review comments
@@ -16,20 +16,22 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-
-
-      - name: Run PrivGuard Sentinel
-        id: sentinel
+      # LLM reasoning runs only when the LLM_API_KEY secret is set.
+      # Defaults to Google Gemini's OpenAI-compatible API; override with the
+      # LLM_API_URL / LLM_MODEL repository variables to use another provider.
+      - name: Run PrivGuard Nexus
+        id: nexus
         uses: ./
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          llm-api-url:  ${{ secrets.LLM_API_URL }}
+          llm-api-url:  ${{ secrets.LLM_API_KEY != '' && (vars.LLM_API_URL || 'https://generativelanguage.googleapis.com/v1beta/openai') || '' }}
           llm-api-key:  ${{ secrets.LLM_API_KEY }}
-          llm-model:    ${{ vars.LLM_MODEL || 'llama3:8b' }}
+          llm-model:    ${{ vars.LLM_MODEL || 'gemini-2.5-flash' }}
           strict-mode:  'true'
+          min-severity: 'MEDIUM'
 
       - name: Echo decision
         if: always()
         run: |
-          echo "Decision: ${{ steps.sentinel.outputs.decision }}"
-          echo "Overall score: ${{ steps.sentinel.outputs.overall-score }}"
+          echo "Decision: ${{ steps.nexus.outputs.decision }}"
+          echo "Overall score: ${{ steps.nexus.outputs.overall-score }}"

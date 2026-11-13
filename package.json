@@ -1,10 +1,10 @@
 {
-  "name": "privguard-sentinel",
+  "name": "privguard-nexus",
   "version": "1.0.0",
   "private": true,
   "workspaces": ["scanner"],
   "scripts": {
     "build": "npm run build --workspace=scanner",
-    "scan": "npm run build --workspace=scanner && node scanner/dist/index.js"
+    "scan": "ts-node --transpile-only scanner/src/index.ts"
   }
 }

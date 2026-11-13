@@ -105,6 +105,10 @@ async function run() {
         opts.llmModel,
         llmUrl
       );
+      if (result.unavailable) {
+        console.log(`LLM UNAVAILABLE — keeping rule result (${result.reason.slice(0, 70)})`);
+        continue;
+      }
       finding.llmConfirmed = result.isViolation;
       finding.llmViolationType = result.type;
       finding.llmReason = result.reason;

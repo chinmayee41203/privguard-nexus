@@ -24,8 +24,80 @@ export interface LLMResult {
   reason: string;
   fix: string;
   intent: Intent;
+  /** True when the LLM couldn't be reached; callers keep the rule-based finding as-is. */
+  unavailable?: boolean;
 }
 
+export interface LLMConfig {
+  model: string;
+  url: string;
+  key: string;
+}
+
+/**
+ * Sends one system + user prompt to an Ollama or OpenAI-compatible chat API and
+ * returns the raw text reply. Retries rate limits and transient errors; throws
+ * if the model can't be reached, so callers can fall back to rule results.
+ */
+export async function callLLM(system: string, user: string, cfg: LLMConfig): Promise<string> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (cfg.key) headers["Authorization"] = `Bearer ${cfg.key}`;
+
+  // If the base URL already ends in a version segment (e.g. Gemini's
+  // https://generativelanguage.googleapis.com/v1beta/openai), don't add /v1 again.
+  const base = cfg.url.replace(/\/+$/, "");
+  const isOllama = !cfg.key && (base.includes("localhost") || base.includes("11434"));
+  const hasVersion = /\/v\d+[a-z0-9]*(\/openai)?$/i.test(base);
+  const endpoint = isOllama
+    ? `${base}/api/generate`
+    : hasVersion
+      ? `${base}/chat/completions`
+      : `${base}/v1/chat/completions`;
+
+  let jsonMode = true;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const body = isOllama
+      ? JSON.stringify({ model: cfg.model, prompt: user, system, stream: false, format: "json" })
+      : JSON.stringify({
+          model: cfg.model,
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: user },
+          ],
+          ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
+        });
+
+    const res = await fetch(endpoint, { method: "POST", headers, body });
+    if (res.ok) {
+      const data = (await res.json()) as Record<string, unknown>;
+      return isOllama
+        ? ((data.response as string) ?? "")
+        : ((data.choices as Array<{ message: { content: string } }>)?.[0]?.message?.content ?? "");
+    }
+
+    const text = await res.text();
+    if (res.status === 400 && jsonMode && /response_format|json/i.test(text)) {
+      jsonMode = false; // provider doesn't support JSON mode; the prompt still asks for JSON
+      continue;
+    }
+    // Free-tier APIs throttle bursts of calls: wait 5s, 20s, 45s before giving up.
+    if ((res.status === 429 || res.status >= 500) && attempt < 3) {
+      await new Promise((r) => setTimeout(r, 5000 * (attempt + 1) ** 2));
+      continue;
+    }
+    throw new Error(`LLM HTTP ${res.status}: ${text.slice(0, 300)}`);
+  }
+  throw new Error("LLM request failed after retries");
+}
+
+/** Pulls the first JSON object out of a model reply (tolerates code fences or extra prose). */
+export function parseJsonReply<T>(raw: string): T {
+  const match = raw.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error("No JSON found in LLM response");
+  return JSON.parse(match[0]) as T;
+}
+
+/** Single-finding review, used by the local CLI (`privguard <dir> --llm`). */
 export async function analyzeWithLLM(
   file: string,
   line: number,
@@ -36,37 +108,9 @@ export async function analyzeWithLLM(
 ): Promise<LLMResult> {
   const prompt = `File: ${file} | Line: ${line}\n\nCode snippet:\n\`\`\`\n${snippet}\n\`\`\``;
 
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (llmKey) headers["Authorization"] = `Bearer ${llmKey}`;
-
-  // Support both Ollama (/api/generate) and OpenAI-compatible (/v1/chat/completions) endpoints
-  const isOllama = !llmKey && (llmUrl.includes("localhost") || llmUrl.includes("11434"));
-  const endpoint = isOllama ? `${llmUrl}/api/generate` : `${llmUrl}/v1/chat/completions`;
-
   try {
-    const body = isOllama
-      ? JSON.stringify({ model, prompt, system: SYSTEM_PROMPT, stream: false, format: "json" })
-      : JSON.stringify({
-          model,
-          messages: [
-            { role: "system", content: SYSTEM_PROMPT },
-            { role: "user", content: prompt },
-          ],
-          response_format: { type: "json_object" }
-        });
-
-    const res = await fetch(endpoint, { method: "POST", headers, body });
-    if (!res.ok) throw new Error(`LLM HTTP ${res.status}: ${await res.text()}`);
-
-    const data = await res.json() as Record<string, unknown>;
-    const raw: string = isOllama
-      ? (data.response as string) ?? ""
-      : ((data.choices as Array<{ message: { content: string } }>)[0]?.message?.content ?? "");
-
-    const match = raw.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error("No JSON found in LLM response");
-
-    const parsed = JSON.parse(match[0]) as Partial<LLMResult>;
+    const raw = await callLLM(SYSTEM_PROMPT, prompt, { model, url: llmUrl, key: llmKey });
+    const parsed = parseJsonReply<Partial<LLMResult>>(raw);
     return {
       isViolation: Boolean(parsed.isViolation),
       type: parsed.type ?? "false_positive",
@@ -81,6 +125,7 @@ export async function analyzeWithLLM(
       reason: `LLM analysis unavailable: ${(err as Error).message}`,
       fix: "Review this finding manually.",
       intent: "accidental",
+      unavailable: true,
     };
   }
 }

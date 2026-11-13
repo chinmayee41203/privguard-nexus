@@ -107,9 +107,11 @@ async function reviewFiles(files: PRFile[], s: Settings): Promise<ReviewResult> 
     for (const chunk of chunks) {
       const flags = allFindings.filter(f => f.file === chunk.file && chunk.addedLines.has(f.line));
       const result = await reviewChunk(chunk, flags, cfg);
-      if (!result) {
+      if ('error' in result) {
         chunksFailed++;
-        core.warning(`AI review unavailable for ${chunk.file}:${chunk.firstLine}-${chunk.lastLine}; using rule results only.`);
+        core.warning(
+          `AI review unavailable for ${chunk.file}:${chunk.firstLine}-${chunk.lastLine}; using rule results only. Reason: ${result.error}`
+        );
         continue;
       }
       chunksReviewed++;

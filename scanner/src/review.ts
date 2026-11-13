@@ -117,13 +117,14 @@ export interface ChunkReview {
 
 /**
  * Reviews one chunk. Applies verdicts to `flags` in place and returns new AI
- * findings. Returns null if the LLM is unavailable, leaving rule findings untouched.
+ * findings. If the LLM is unavailable, returns `{ error }` and leaves the rule
+ * findings untouched.
  */
 export async function reviewChunk(
   chunk: DiffChunk,
   flags: Finding[],
   cfg: LLMConfig
-): Promise<ChunkReview | null> {
+): Promise<ChunkReview | { error: string }> {
   const ids = new Map<string, Finding>();
   const flagLines = flags.map((f, i) => {
     const id = `R${i + 1}`;
@@ -144,8 +145,8 @@ export async function reviewChunk(
   let parsed: { ruleVerdicts?: RawVerdict[]; newIssues?: RawIssue[] };
   try {
     parsed = parseJsonReply(await callLLM(REVIEW_PROMPT, user, cfg));
-  } catch {
-    return null;
+  } catch (err) {
+    return { error: (err as Error).message.slice(0, 300) };
   }
 
   let reviewed = 0;

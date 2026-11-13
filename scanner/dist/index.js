@@ -30031,9 +30031,9 @@ async function reviewFiles(files, s) {
         for (const chunk of chunks) {
             const flags = allFindings.filter(f => f.file === chunk.file && chunk.addedLines.has(f.line));
             const result = await (0, review_1.reviewChunk)(chunk, flags, cfg);
-            if (!result) {
+            if ('error' in result) {
                 chunksFailed++;
-                core.warning(`AI review unavailable for ${chunk.file}:${chunk.firstLine}-${chunk.lastLine}; using rule results only.`);
+                core.warning(`AI review unavailable for ${chunk.file}:${chunk.firstLine}-${chunk.lastLine}; using rule results only. Reason: ${result.error}`);
                 continue;
             }
             chunksReviewed++;
@@ -30869,7 +30869,8 @@ const asIntent = (v) => (INTENTS.includes(v) ? v : "accidental");
 const clean = (v, max = 300) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, max);
 /**
  * Reviews one chunk. Applies verdicts to `flags` in place and returns new AI
- * findings. Returns null if the LLM is unavailable, leaving rule findings untouched.
+ * findings. If the LLM is unavailable, returns `{ error }` and leaves the rule
+ * findings untouched.
  */
 async function reviewChunk(chunk, flags, cfg) {
     const ids = new Map();
@@ -30891,8 +30892,8 @@ async function reviewChunk(chunk, flags, cfg) {
     try {
         parsed = (0, llm_1.parseJsonReply)(await (0, llm_1.callLLM)(REVIEW_PROMPT, user, cfg));
     }
-    catch {
-        return null;
+    catch (err) {
+        return { error: err.message.slice(0, 300) };
     }
     let reviewed = 0;
     let dismissed = 0;

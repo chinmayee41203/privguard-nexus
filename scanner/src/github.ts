@@ -123,8 +123,12 @@ export interface ReviewStats {
   aiFound: number;
   aiUsed: boolean;
   aiPartial: boolean;
+  /** True when an LLM is set up (even if every call failed). */
+  aiConfigured?: boolean;
   hidden: number;
   minSeverity: string;
+  /** What was reviewed, for the panel's wording. */
+  scope?: 'pull request' | 'push';
 }
 
 export function buildRiskPanel(
@@ -151,10 +155,12 @@ export function buildRiskPanel(
     if (stats.aiUsed) {
       pipeline.push(`| Dismissed by AI as false positives | ${stats.dismissed} |`);
       pipeline.push(`| New issues found by AI review | ${stats.aiFound} |`);
+      if (stats.aiPartial) pipeline.push('| Note | AI unavailable for part of the diff; rule results used there |');
+    } else if (stats.aiConfigured) {
+      pipeline.push('| AI review | unavailable (rate limit or API error), rule results used |');
     } else {
-      pipeline.push('| AI review | not run (rules only) |');
+      pipeline.push('| AI review | not configured (rules only) |');
     }
-    if (stats.aiPartial) pipeline.push('| Note | AI unavailable for part of the diff; rule results used there |');
     if (stats.hidden > 0) {
       pipeline.push(`| Hidden below min-severity (${stats.minSeverity}) | ${stats.hidden} |`);
     }
@@ -182,7 +188,7 @@ export function buildRiskPanel(
     `| 🟢 Low      | ${sevCounts.low} |`,
     ...pipeline,
     '',
-    `*${findings.length} total finding(s) detected in this PR's diff.*`,
+    `*${findings.length} total finding(s) detected in this ${stats?.scope === 'push' ? 'push' : "PR's diff"}.*`,
   ].join('\n');
 }
 

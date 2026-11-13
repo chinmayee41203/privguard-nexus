@@ -133,7 +133,11 @@ function PipelineStrip({ r }: { r: PrivGuardReport }) {
       <div className="flex items-center justify-between flex-wrap gap-2">
         <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest">Review pipeline</p>
         <span className="text-xs text-gray-500 font-mono">
-          {p.aiUsed ? `rules → AI review (${p.model ?? "LLM"}) → score` : "rules only (AI review not run)"}
+          {p.aiUsed
+            ? `rules → AI review (${p.model ?? "LLM"}) → score`
+            : p.model
+              ? `rules only: AI review (${p.model}) was unavailable`
+              : "rules only (AI review not configured)"}
         </span>
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">

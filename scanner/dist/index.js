@@ -30077,6 +30077,7 @@ async function reviewFiles(files, s) {
             aiFound: aiFindings.length,
             aiUsed,
             aiPartial: chunksFailed > 0,
+            aiConfigured: Boolean(s.llmApiUrl),
             hidden: scoredFindings.length - shown.length,
             minSeverity: s.minSeverity,
         },
@@ -30141,7 +30142,7 @@ async function runPullRequest(s, octokit) {
         side: 'RIGHT',
         body: (0, github_1.buildInlineComment)(f),
     }));
-    const panel = (0, github_1.buildRiskPanel)(r.scores, r.decision, r.scoredFindings, r.stats);
+    const panel = (0, github_1.buildRiskPanel)(r.scores, r.decision, r.scoredFindings, { ...r.stats, scope: 'pull request' });
     await (0, github_1.postReview)(octokit, owner, repoName, pullNumber, commitSha, panel, comments);
     core.info(`  Posted review with ${comments.length} inline comment(s)`);
     await core.summary.addRaw(panel).write();
@@ -30181,7 +30182,7 @@ async function runPush(s, octokit) {
     const r = await reviewFiles(files, s);
     const head = (payload.head_commit ?? {});
     const commitCount = Array.isArray(payload.commits) ? payload.commits.length : 1;
-    const panel = (0, github_1.buildRiskPanel)(r.scores, r.decision, r.scoredFindings, r.stats);
+    const panel = (0, github_1.buildRiskPanel)(r.scores, r.decision, r.scoredFindings, { ...r.stats, scope: 'push' });
     // One summary comment on the pushed commit (skipped when there's nothing to report).
     if (r.scoredFindings.length > 0) {
         const body = [
@@ -30440,12 +30441,15 @@ function buildRiskPanel(scores, decision, findings, stats) {
         if (stats.aiUsed) {
             pipeline.push(`| Dismissed by AI as false positives | ${stats.dismissed} |`);
             pipeline.push(`| New issues found by AI review | ${stats.aiFound} |`);
+            if (stats.aiPartial)
+                pipeline.push('| Note | AI unavailable for part of the diff; rule results used there |');
+        }
+        else if (stats.aiConfigured) {
+            pipeline.push('| AI review | unavailable (rate limit or API error), rule results used |');
         }
         else {
-            pipeline.push('| AI review | not run (rules only) |');
+            pipeline.push('| AI review | not configured (rules only) |');
         }
-        if (stats.aiPartial)
-            pipeline.push('| Note | AI unavailable for part of the diff; rule results used there |');
         if (stats.hidden > 0) {
             pipeline.push(`| Hidden below min-severity (${stats.minSeverity}) | ${stats.hidden} |`);
         }
@@ -30472,7 +30476,7 @@ function buildRiskPanel(scores, decision, findings, stats) {
         `| 🟢 Low      | ${sevCounts.low} |`,
         ...pipeline,
         '',
-        `*${findings.length} total finding(s) detected in this PR's diff.*`,
+        `*${findings.length} total finding(s) detected in this ${stats?.scope === 'push' ? 'push' : "PR's diff"}.*`,
     ].join('\n');
 }
 function buildInlineComment(finding) {

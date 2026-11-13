@@ -161,6 +161,7 @@ async function reviewFiles(files: PRFile[], s: Settings): Promise<ReviewResult> 
       aiFound: aiFindings.length,
       aiUsed,
       aiPartial: chunksFailed > 0,
+      aiConfigured: Boolean(s.llmApiUrl),
       hidden: scoredFindings.length - shown.length,
       minSeverity: s.minSeverity,
     },
@@ -234,7 +235,7 @@ async function runPullRequest(s: Settings, octokit: ReturnType<typeof github.get
     side: 'RIGHT' as const,
     body: buildInlineComment(f),
   }));
-  const panel = buildRiskPanel(r.scores, r.decision, r.scoredFindings, r.stats);
+  const panel = buildRiskPanel(r.scores, r.decision, r.scoredFindings, { ...r.stats, scope: 'pull request' });
   await postReview(octokit, owner, repoName, pullNumber, commitSha, panel, comments);
   core.info(`  Posted review with ${comments.length} inline comment(s)`);
   await core.summary.addRaw(panel).write();
@@ -280,7 +281,7 @@ async function runPush(s: Settings, octokit: ReturnType<typeof github.getOctokit
 
   const head = (payload.head_commit ?? {}) as { message?: string; url?: string; author?: { username?: string; name?: string } };
   const commitCount = Array.isArray(payload.commits) ? payload.commits.length : 1;
-  const panel = buildRiskPanel(r.scores, r.decision, r.scoredFindings, r.stats);
+  const panel = buildRiskPanel(r.scores, r.decision, r.scoredFindings, { ...r.stats, scope: 'push' });
 
   // One summary comment on the pushed commit (skipped when there's nothing to report).
   if (r.scoredFindings.length > 0) {

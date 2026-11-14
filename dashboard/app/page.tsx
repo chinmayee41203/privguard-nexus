@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { PrivGuardReport, Finding, FindingType, DecisionType, Severity } from "@/lib/reportTypes";
 import { DEMO_SCENARIOS } from "@/lib/demoData";
+import Link from "next/link";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -365,6 +366,11 @@ export default function Dashboard() {
 
   useEffect(() => { loadLatest(); }, [loadLatest]);
 
+  // Old shareable link /#install now lives at its own page.
+  useEffect(() => {
+    if (window.location.hash === "#install") window.location.replace("/install");
+  }, []);
+
   const selectDemo = (key: string) => {
     setActiveDemo(key);
     setReport(DEMO_SCENARIOS[key].report);
@@ -412,6 +418,12 @@ export default function Dashboard() {
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap justify-end">
+            <Link
+              href="/install"
+              className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-indigo-500/60 bg-indigo-500/20 text-indigo-200 hover:bg-indigo-500/30 transition-colors"
+            >
+              ＋ Add to your repo
+            </Link>
             <a href={REPO_URL} target="_blank" rel="noreferrer" className="text-xs px-3 py-1.5 rounded-lg border border-white/10 text-gray-400 hover:text-gray-200 hover:border-white/20 transition-colors">
               GitHub ↗
             </a>
@@ -428,6 +440,43 @@ export default function Dashboard() {
             </span>
           </div>
         </div>
+
+        {/* ── What is PrivGuard ─────────────────────────────────────────── */}
+        <section aria-labelledby="about-title" className="glass p-6 border-indigo-500/20">
+          <div className="grid gap-6 lg:grid-cols-[1fr_auto] lg:items-center">
+            <div className="space-y-3">
+              <p className="text-[11px] font-semibold uppercase tracking-widest text-indigo-300">What is PrivGuard Nexus?</p>
+              <h2 id="about-title" className="text-xl sm:text-2xl font-bold text-gray-100 leading-snug">
+                A security reviewer that checks every code change before it reaches your main branch.
+              </h2>
+              <p className="text-sm text-gray-400 max-w-3xl leading-relaxed">
+                It runs as a GitHub Action. Each pull request or push is scanned by fixed rules and then by an AI
+                reviewer (Gemini). It comments on the exact lines, gives a risk score, and says merge or block.
+              </p>
+              <ul className="grid gap-2 sm:grid-cols-3 pt-1">
+                {[
+                  ["Finds", "Leaked keys and passwords, personal data, injection bugs, prompt injection and hidden backdoors"],
+                  ["Explains", "Inline comments on GitHub with the line, the risk and how to fix it"],
+                  ["Decides", "A 0 to 100 risk score and a verdict, so risky code can be blocked automatically"],
+                ].map(([title, text]) => (
+                  <li key={title} className="rounded-lg border border-white/8 bg-black/20 p-3">
+                    <p className="text-xs font-semibold text-gray-200">{title}</p>
+                    <p className="text-xs text-gray-500 mt-1 leading-relaxed">{text}</p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div className="flex flex-col items-start lg:items-center gap-2">
+              <Link
+                href="/install"
+                className="inline-flex items-center gap-2 rounded-xl border border-indigo-400/60 bg-indigo-500/30 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-500/20 hover:bg-indigo-500/40 transition-colors"
+              >
+                Add PrivGuard to your repository →
+              </Link>
+              <p className="text-xs text-gray-500">Free · about 2 minutes</p>
+            </div>
+          </div>
+        </section>
 
         {/* ── Demo Buttons ──────────────────────────────────────────────── */}
         <div className="glass p-4">
